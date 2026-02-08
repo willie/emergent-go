@@ -23,9 +23,6 @@ func main() {
 	// Routes
 	mux := http.NewServeMux()
 
-	// Static files
-	mux.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.Dir("static"))))
-
 	// Pages
 	mux.HandleFunc("/", app.Index)
 	mux.HandleFunc("/game/new", app.NewGame)

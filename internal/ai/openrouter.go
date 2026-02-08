@@ -3,6 +3,7 @@ package ai
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -117,7 +118,7 @@ type StreamEvent struct {
 }
 
 // GenerateText makes a non-streaming chat completion
-func GenerateText(model string, messages []ChatMessage, tools []Tool, toolChoice interface{}) (*ChatResponse, error) {
+func GenerateText(ctx context.Context, model string, messages []ChatMessage, tools []Tool, toolChoice interface{}) (*ChatResponse, error) {
 	if model == "" {
 		model = Models.Fast
 	}
@@ -135,7 +136,7 @@ func GenerateText(model string, messages []ChatMessage, tools []Tool, toolChoice
 		return nil, fmt.Errorf("marshal request: %w", err)
 	}
 
-	httpReq, err := http.NewRequest("POST", "https://openrouter.ai/api/v1/chat/completions", bytes.NewReader(body))
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", "https://openrouter.ai/api/v1/chat/completions", bytes.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
 	}
@@ -183,7 +184,7 @@ type StreamResult struct {
 }
 
 // StreamText makes a streaming chat completion, calling cb for each text chunk
-func StreamText(model string, messages []ChatMessage, tools []Tool, cb StreamCallback) (*StreamResult, error) {
+func StreamText(ctx context.Context, model string, messages []ChatMessage, tools []Tool, cb StreamCallback) (*StreamResult, error) {
 	if model == "" {
 		model = Models.MainConversation
 	}
@@ -200,7 +201,7 @@ func StreamText(model string, messages []ChatMessage, tools []Tool, cb StreamCal
 		return nil, fmt.Errorf("marshal request: %w", err)
 	}
 
-	httpReq, err := http.NewRequest("POST", "https://openrouter.ai/api/v1/chat/completions", bytes.NewReader(body))
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", "https://openrouter.ai/api/v1/chat/completions", bytes.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
 	}
@@ -224,6 +225,9 @@ func StreamText(model string, messages []ChatMessage, tools []Tool, cb StreamCal
 
 	scanner := bufio.NewScanner(resp.Body)
 	for scanner.Scan() {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
 		line := scanner.Text()
 
 		if !strings.HasPrefix(line, "data: ") {

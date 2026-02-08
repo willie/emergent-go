@@ -2,8 +2,10 @@ package handlers
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
+	"html"
 	"log"
 	"net/http"
 	"strings"
@@ -82,6 +84,8 @@ func (a *App) ChatContinue(w http.ResponseWriter, r *http.Request) {
 
 // streamResponse runs the LLM and streams SSE events
 func (a *App) streamResponse(w http.ResponseWriter, r *http.Request, session *world.SessionState, userMsg *models.ChatMessage) {
+	ctx := r.Context()
+
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		http.Error(w, "Streaming not supported", 500)
@@ -94,10 +98,10 @@ func (a *App) streamResponse(w http.ResponseWriter, r *http.Request, session *wo
 
 	// Send user message bubble if present
 	if userMsg != nil {
-		html := fmt.Sprintf(
+		userHTML := fmt.Sprintf(
 			`<div class="flex justify-end"><div class="max-w-[80%%] rounded-lg px-4 py-2 bg-blue-600 text-white"><div class="prose prose-invert max-w-none break-words whitespace-pre-wrap">%s</div></div></div>`,
-			escapeHTML(userMsg.Content))
-		writeSSE(w, flusher, "user-message", html)
+			html.EscapeString(userMsg.Content))
+		writeSSE(w, flusher, "user-message", userHTML)
 	}
 
 	// Build AI messages
@@ -115,12 +119,12 @@ func (a *App) streamResponse(w http.ResponseWriter, r *http.Request, session *wo
 	}
 
 	// Stream tokens
-	result, err := ai.StreamText(model, fullMessages, tools, func(content string) {
-		writeSSE(w, flusher, "token", escapeHTML(content))
+	result, err := ai.StreamText(ctx, model, fullMessages, tools, func(content string) {
+		writeSSE(w, flusher, "token", html.EscapeString(content))
 	})
 
 	if err != nil {
-		writeSSE(w, flusher, "error", escapeHTML(err.Error()))
+		writeSSE(w, flusher, "error", html.EscapeString(err.Error()))
 		writeSSE(w, flusher, "done", "")
 		return
 	}
@@ -135,7 +139,7 @@ func (a *App) streamResponse(w http.ResponseWriter, r *http.Request, session *wo
 
 	// Process tool calls and build OOB updates
 	if len(result.ToolCalls) > 0 {
-		a.processToolCalls(session, result.ToolCalls, assistantMsg.ID)
+		a.processToolCalls(ctx, session, result.ToolCalls, assistantMsg.ID)
 
 		// Render OOB swap fragments for changed state
 		oobHTML := a.renderOOBUpdates(session)
@@ -154,128 +158,44 @@ func (a *App) streamResponse(w http.ResponseWriter, r *http.Request, session *wo
 
 // renderOOBUpdates renders out-of-band swap HTML for header, sidebar, etc.
 func (a *App) renderOOBUpdates(session *world.SessionState) string {
+	data := a.buildGameData(session)
 	var buf strings.Builder
 
 	// Location name
-	location := session.GetPlayerLocation()
 	locName := "Unknown"
-	if location != nil {
-		locName = location.CanonicalName
+	if data.Location != nil {
+		locName = data.Location.CanonicalName
 	}
-	fmt.Fprintf(&buf, `<span id="location-name" hx-swap-oob="innerHTML">%s</span>`, escapeHTML(locName))
+	fmt.Fprintf(&buf, `<span id="location-name" hx-swap-oob="innerHTML">%s</span>`, html.EscapeString(locName))
 
 	// Narrative time
-	fmt.Fprintf(&buf, `<span id="narrative-time" hx-swap-oob="innerHTML">%s</span>`, escapeHTML(session.World.Time.NarrativeTime))
+	fmt.Fprintf(&buf, `<span id="narrative-time" hx-swap-oob="innerHTML">%s</span>`, html.EscapeString(data.World.Time.NarrativeTime))
 
 	// Tick count
-	fmt.Fprintf(&buf, `<div id="tick-count" hx-swap-oob="innerHTML">tick %d</div>`, session.World.Time.Tick)
+	fmt.Fprintf(&buf, `<div id="tick-count" hx-swap-oob="innerHTML">tick %d</div>`, data.World.Time.Tick)
 
 	// Present characters
-	nearby := session.GetCharactersAtPlayerLocation()
 	var names []string
-	for _, c := range nearby {
-		names = append(names, escapeHTML(c.Name))
+	for _, c := range data.NearbyCharacters {
+		names = append(names, html.EscapeString(c.Name))
 	}
-	presentHTML := strings.Join(names, ", ")
-	fmt.Fprintf(&buf, `<span id="present-chars" hx-swap-oob="innerHTML">%s</span>`, presentHTML)
+	fmt.Fprintf(&buf, `<span id="present-chars" hx-swap-oob="innerHTML">%s</span>`, strings.Join(names, ", "))
 
-	// Offscreen conversations
-	offscreenHTML := a.renderOffscreenPartial(session)
-	fmt.Fprintf(&buf, `<div id="offscreen-content" hx-swap-oob="innerHTML">%s</div>`, offscreenHTML)
+	// Offscreen conversations — use cached template
+	fmt.Fprintf(&buf, `<div id="offscreen-content" hx-swap-oob="innerHTML">%s</div>`, a.renderPartial("offscreen_list", data))
 
-	// Characters list
-	charsHTML := a.renderCharactersPartial(session)
-	fmt.Fprintf(&buf, `<div id="characters-content" hx-swap-oob="innerHTML">%s</div>`, charsHTML)
+	// Characters list — use cached template
+	fmt.Fprintf(&buf, `<div id="characters-content" hx-swap-oob="innerHTML">%s</div>`, a.renderPartial("character_list", data))
 
 	return buf.String()
 }
 
-// renderOffscreenPartial renders the offscreen conversations HTML
-func (a *App) renderOffscreenPartial(session *world.SessionState) string {
-	convs := session.GetOffscreenConversations()
-	if len(convs) == 0 {
-		return `<div class="p-4 text-sm text-zinc-600 text-center"><p>No other conversations happening right now.</p><p class="mt-2 text-xs">When characters interact without you, their conversations will appear here.</p></div>`
-	}
-
-	var buf strings.Builder
-	for _, conv := range convs {
-		var names []string
-		for _, pid := range conv.ParticipantIDs {
-			c := session.GetCharacterByID(pid)
-			if c != nil {
-				names = append(names, escapeHTML(c.Name))
-			}
-		}
-		locName := "Unknown"
-		loc := session.GetLocationCluster(conv.LocationClusterID)
-		if loc != nil {
-			locName = loc.CanonicalName
-		}
-
-		fmt.Fprintf(&buf, `<div class="border-b border-zinc-800">`)
-		fmt.Fprintf(&buf, `<button onclick="toggleOffscreen('%s')" class="w-full px-4 py-3 flex items-center justify-between hover:bg-zinc-900 transition-colors text-left">`, conv.ID)
-		fmt.Fprintf(&buf, `<div class="flex flex-col gap-0.5"><span class="text-sm font-medium text-zinc-200">%s</span>`, strings.Join(names, " &amp; "))
-		fmt.Fprintf(&buf, `<span class="text-xs text-zinc-500">%s</span></div>`, escapeHTML(locName))
-		fmt.Fprintf(&buf, `<svg id="offscreen-arrow-%s" class="w-4 h-4 text-zinc-500 transition-transform rotate-180" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>`, conv.ID)
-		fmt.Fprintf(&buf, `</button>`)
-		fmt.Fprintf(&buf, `<div id="offscreen-detail-%s" class="max-h-64 overflow-y-auto px-4 pb-4 space-y-2">`, conv.ID)
-		if len(conv.Messages) == 0 {
-			buf.WriteString(`<p class="text-xs text-zinc-600 italic">Nothing yet...</p>`)
-		} else {
-			for _, msg := range conv.Messages {
-				buf.WriteString(`<div class="text-sm">`)
-				if msg.SpeakerID != "" {
-					speaker := session.GetCharacterByID(msg.SpeakerID)
-					if speaker != nil {
-						fmt.Fprintf(&buf, `<span class="font-medium text-zinc-400">%s: </span>`, escapeHTML(speaker.Name))
-					}
-				}
-				fmt.Fprintf(&buf, `<span class="text-zinc-300">%s</span></div>`, escapeHTML(msg.Content))
-			}
-		}
-		buf.WriteString(`</div></div>`)
-	}
-	return buf.String()
-}
-
-// renderCharactersPartial renders the characters list HTML
-func (a *App) renderCharactersPartial(session *world.SessionState) string {
-	chars := session.GetDiscoveredCharacters()
-	if len(chars) == 0 {
-		return `<div class="p-4 text-sm text-zinc-600 text-center">No characters discovered yet.</div>`
-	}
-
+// renderPartial executes a named template block into a string
+func (a *App) renderPartial(name string, data interface{}) string {
 	var buf bytes.Buffer
-	tmpl := a.PageTemplates["game.html"]
-	if tmpl == nil {
-		// Fallback: build inline
-		var sb strings.Builder
-		sb.WriteString(`<div class="flex flex-col">`)
-		for _, c := range chars {
-			locName := "Unknown"
-			loc := session.GetLocationCluster(c.CurrentLocationClusterID)
-			if loc != nil {
-				locName = loc.CanonicalName
-			}
-			fmt.Fprintf(&sb, `<div class="border-b border-zinc-800">
-				<button onclick="toggleCharacter('%s')" class="w-full px-4 py-3 flex items-center justify-between hover:bg-zinc-900 transition-colors text-left">
-				<div class="flex flex-col gap-0.5 flex-1 mr-4"><span class="text-sm font-medium text-zinc-200">%s</span>
-				<span class="text-xs text-zinc-500">%s</span></div>
-				<svg id="char-arrow-%s" class="w-4 h-4 text-zinc-500 transition-transform" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
-				</button>
-				<div id="char-detail-%s" class="hidden px-4 pb-4 space-y-3"><p class="text-sm text-zinc-400">%s</p></div>
-				</div>`,
-				c.ID, escapeHTML(c.Name), escapeHTML(locName), c.ID, c.ID, escapeHTML(c.Description))
-		}
-		sb.WriteString(`</div>`)
-		return sb.String()
-	}
-
-	// Use the cached template's character_list block
-	data := a.buildGameData(session)
-	if err := tmpl.ExecuteTemplate(&buf, "character_list", data); err != nil {
-		log.Printf("renderCharactersPartial error: %v", err)
-		return `<div class="p-4 text-sm text-zinc-600 text-center">Error rendering characters.</div>`
+	if err := a.PageTemplates["game.html"].ExecuteTemplate(&buf, name, data); err != nil {
+		log.Printf("renderPartial %s error: %v", name, err)
+		return ""
 	}
 	return buf.String()
 }
@@ -484,11 +404,11 @@ func buildChatTools(ws *models.WorldState) []ai.Tool {
 	}
 }
 
-func (a *App) processToolCalls(session *world.SessionState, toolCalls []ai.ToolCall, messageID string) {
+func (a *App) processToolCalls(ctx context.Context, session *world.SessionState, toolCalls []ai.ToolCall, messageID string) {
 	for _, tc := range toolCalls {
 		switch tc.Function.Name {
 		case "moveToLocation":
-			a.handleMoveToLocation(session, tc, messageID)
+			a.handleMoveToLocation(ctx, session, tc, messageID)
 		case "advanceTime":
 			a.handleAdvanceTime(session, tc)
 		case "discoverCharacter":
@@ -497,7 +417,7 @@ func (a *App) processToolCalls(session *world.SessionState, toolCalls []ai.ToolC
 	}
 }
 
-func (a *App) handleMoveToLocation(session *world.SessionState, tc ai.ToolCall, messageID string) {
+func (a *App) handleMoveToLocation(ctx context.Context, session *world.SessionState, tc ai.ToolCall, messageID string) {
 	var args struct {
 		Destination   string  `json:"destination"`
 		NarrativeTime *string `json:"narrativeTime"`
@@ -529,7 +449,7 @@ func (a *App) handleMoveToLocation(session *world.SessionState, tc ai.ToolCall, 
 		}{c.ID, c.CanonicalName})
 	}
 
-	resolved, err := world.ResolveLocation(args.Destination, clusters, session.ModelID)
+	resolved, err := world.ResolveLocation(ctx, args.Destination, clusters, session.ModelID)
 	if err != nil || resolved == nil {
 		name := world.ExtractCanonicalName(args.Destination)
 		resolved = &world.ResolveLocationResult{
@@ -553,7 +473,7 @@ func (a *App) handleMoveToLocation(session *world.SessionState, tc ai.ToolCall, 
 		timeSinceLastSim := ws.Time.Tick - session.LastSimulationTick
 		if timeSinceLastSim > 5 && previousLocationID != clusterID {
 			session.IsSimulating = true
-			simResult, err := world.SimulateOffscreen(ws, clusterID, timeSinceLastSim, session.ModelID)
+			simResult, err := world.SimulateOffscreen(ctx, ws, clusterID, timeSinceLastSim, session.ModelID)
 			if err == nil && simResult != nil {
 				for _, event := range simResult.Events {
 					event.SourceMessageID = messageID
@@ -644,13 +564,4 @@ func findPlayer(ws *models.WorldState) *models.Character {
 		}
 	}
 	return nil
-}
-
-func escapeHTML(s string) string {
-	s = strings.ReplaceAll(s, "&", "&amp;")
-	s = strings.ReplaceAll(s, "<", "&lt;")
-	s = strings.ReplaceAll(s, ">", "&gt;")
-	s = strings.ReplaceAll(s, "\"", "&quot;")
-	s = strings.ReplaceAll(s, "'", "&#39;")
-	return s
 }

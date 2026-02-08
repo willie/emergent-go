@@ -1,6 +1,7 @@
 package world
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"regexp"
@@ -54,7 +55,7 @@ func groupCharactersByLocation(characters []models.Character) map[string][]model
 	return groups
 }
 
-func generateSummary(characters []models.Character, locationName string, timeElapsed int, world *models.WorldState, modelID string) (*models.WorldEvent, error) {
+func generateSummary(ctx context.Context, characters []models.Character, locationName string, timeElapsed int, world *models.WorldState, modelID string) (*models.WorldEvent, error) {
 	var names []string
 	for _, c := range characters {
 		names = append(names, c.Name)
@@ -84,7 +85,7 @@ Write a brief 1-2 sentence summary of their interactions. Be specific but concis
 		},
 	}
 
-	resp, err := ai.GenerateText(modelID, messages, nil, nil)
+	resp, err := ai.GenerateText(ctx, modelID, messages, nil, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -112,7 +113,7 @@ Write a brief 1-2 sentence summary of their interactions. Be specific but concis
 
 var dialogueLineRe = regexp.MustCompile(`^([A-Za-z]+):\s*(.+)$`)
 
-func runFullSimulation(characters []models.Character, locationName string, timeElapsed int, world *models.WorldState, modelID string) (*SimulationResult, error) {
+func runFullSimulation(ctx context.Context, characters []models.Character, locationName string, timeElapsed int, world *models.WorldState, modelID string) (*SimulationResult, error) {
 	var names []string
 	for _, c := range characters {
 		names = append(names, c.Name)
@@ -162,7 +163,7 @@ Generate approximately %d exchanges.`,
 		{Role: "user", Content: systemPrompt},
 	}
 
-	resp, err := ai.GenerateText(modelID, messages, nil, nil)
+	resp, err := ai.GenerateText(ctx, modelID, messages, nil, nil)
 	if err != nil {
 		return &SimulationResult{}, err
 	}
@@ -257,7 +258,7 @@ If any character EXPLICITLY decides to leave for another location, report it in 
 		},
 	}
 
-	extractResp, err := ai.GenerateText(modelID, extractMessages, tools, "required")
+	extractResp, err := ai.GenerateText(ctx, modelID, extractMessages, tools, "required")
 
 	var extractedEvents []struct {
 		Description   string `json:"description"`
@@ -368,7 +369,7 @@ If any character EXPLICITLY decides to leave for another location, report it in 
 }
 
 // SimulateOffscreen runs off-screen simulation for non-player characters
-func SimulateOffscreen(world *models.WorldState, playerLocationClusterID string, timeSinceLastSimulation int, modelID string) (*SimulationResult, error) {
+func SimulateOffscreen(ctx context.Context, world *models.WorldState, playerLocationClusterID string, timeSinceLastSimulation int, modelID string) (*SimulationResult, error) {
 	// Get absent, discovered, non-player characters
 	var absentCharacters []models.Character
 	for _, c := range world.Characters {
@@ -404,7 +405,7 @@ func SimulateOffscreen(world *models.WorldState, playerLocationClusterID string,
 		}
 
 		if depth == depthFull {
-			simResult, err := runFullSimulation(chars, locationName, timeSinceLastSimulation, world, modelID)
+			simResult, err := runFullSimulation(ctx, chars, locationName, timeSinceLastSimulation, world, modelID)
 			if err != nil {
 				continue
 			}
@@ -412,7 +413,7 @@ func SimulateOffscreen(world *models.WorldState, playerLocationClusterID string,
 			result.Conversations = append(result.Conversations, simResult.Conversations...)
 			result.CharacterUpdates = append(result.CharacterUpdates, simResult.CharacterUpdates...)
 		} else if depth == depthSummary {
-			event, err := generateSummary(chars, locationName, timeSinceLastSimulation, world, modelID)
+			event, err := generateSummary(ctx, chars, locationName, timeSinceLastSimulation, world, modelID)
 			if err != nil {
 				continue
 			}

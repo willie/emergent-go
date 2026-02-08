@@ -1,6 +1,7 @@
 package world
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"regexp"
@@ -17,7 +18,7 @@ type ResolveLocationResult struct {
 }
 
 // ResolveLocation resolves a location description to an existing cluster or new one
-func ResolveLocation(description string, existingClusters []struct {
+func ResolveLocation(ctx context.Context, description string, existingClusters []struct {
 	ID            string `json:"id"`
 	CanonicalName string `json:"canonicalName"`
 }, modelID string) (*ResolveLocationResult, error) {
@@ -80,7 +81,7 @@ Call the resolveLocation tool with:
 		},
 	}
 
-	resp, err := ai.GenerateText(modelID, messages, tools, "required")
+	resp, err := ai.GenerateText(ctx, modelID, messages, tools, "required")
 	if err != nil {
 		name := ExtractCanonicalName(description)
 		return &ResolveLocationResult{
