@@ -19,11 +19,12 @@ import (
 
 // App holds the application state and dependencies
 type App struct {
-	FuncMap  template.FuncMap
-	Session  *world.SessionState
+	PageTemplates map[string]*template.Template
+	FuncMap       template.FuncMap
+	Session       *world.SessionState
 }
 
-// NewApp creates a new app with templates loaded
+// NewApp creates a new app with templates compiled at startup
 func NewApp() (*App, error) {
 	funcMap := template.FuncMap{
 		"lastN": func(items []models.KnowledgeEntry, n int) []models.KnowledgeEntry {
@@ -42,47 +43,54 @@ func NewApp() (*App, error) {
 		},
 	}
 
+	// Pre-compile all page templates at startup
+	pages := map[string]*template.Template{}
+	for _, page := range []string{"scenario_selector.html", "game.html"} {
+		tmpl, err := compilePageTemplate(funcMap, page)
+		if err != nil {
+			return nil, fmt.Errorf("compile %s: %w", page, err)
+		}
+		pages[page] = tmpl
+	}
+
 	session := world.NewSessionState()
-	// Try to load default save
 	_ = session.Load("surat-world-storage")
 
 	return &App{
-		FuncMap: funcMap,
-		Session: session,
+		PageTemplates: pages,
+		FuncMap:       funcMap,
+		Session:       session,
 	}, nil
 }
 
-// parsePageTemplate parses the layout + a specific page template (+ partials)
-func (a *App) parsePageTemplate(page string) (*template.Template, error) {
+// compilePageTemplate parses layout + a specific page template + partials into one set
+func compilePageTemplate(funcMap template.FuncMap, page string) (*template.Template, error) {
 	files := []string{"templates/layout.html", "templates/" + page}
-	tmpl, err := template.New("").Funcs(a.FuncMap).ParseFiles(files...)
+	tmpl, err := template.New("").Funcs(funcMap).ParseFiles(files...)
 	if err != nil {
-		return nil, fmt.Errorf("parse %s: %w", page, err)
+		return nil, err
 	}
-	// Also parse partials if they exist
-	partialTmpl, err := template.New("").Funcs(a.FuncMap).ParseGlob("templates/partials/*.html")
+	partials, err := template.New("").Funcs(funcMap).ParseGlob("templates/partials/*.html")
 	if err == nil {
-		for _, t := range partialTmpl.Templates() {
-			if _, err := tmpl.AddParseTree(t.Name(), t.Tree); err != nil {
-				log.Printf("Warning: failed to add partial %s: %v", t.Name(), err)
+		for _, t := range partials.Templates() {
+			if _, addErr := tmpl.AddParseTree(t.Name(), t.Tree); addErr != nil {
+				log.Printf("Warning: failed to add partial %s: %v", t.Name(), addErr)
 			}
 		}
 	}
 	return tmpl, nil
 }
 
-// Index serves the main page - either scenario selector or game
+// Index serves the main page
 func (a *App) Index(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path != "/" {
 		http.NotFound(w, r)
 		return
 	}
-
 	if a.Session.World == nil {
 		a.renderScenarioSelector(w, r)
 		return
 	}
-
 	a.renderGame(w, r)
 }
 
@@ -118,15 +126,8 @@ func (a *App) renderScenarioSelector(w http.ResponseWriter, r *http.Request) {
 		"Saves":           displaySaves,
 	}
 
-	tmpl, err := a.parsePageTemplate("scenario_selector.html")
-	if err != nil {
-		http.Error(w, "template error", 500)
-		log.Printf("Template error: %v", err)
-		return
-	}
-
 	w.Header().Set("Content-Type", "text/html")
-	if err := tmpl.ExecuteTemplate(w, "layout.html", data); err != nil {
+	if err := a.PageTemplates["scenario_selector.html"].ExecuteTemplate(w, "layout.html", data); err != nil {
 		log.Printf("Render error: %v", err)
 	}
 }
@@ -152,9 +153,8 @@ type offscreenConvDisplay struct {
 	Messages         []models.Message
 }
 
-func (a *App) renderGame(w http.ResponseWriter, r *http.Request) {
-	session := a.Session
-
+// buildGameData constructs the gameData struct from session state
+func (a *App) buildGameData(session *world.SessionState) gameData {
 	var offscreenConvs []offscreenConvDisplay
 	for _, conv := range session.GetOffscreenConversations() {
 		var names []string
@@ -179,29 +179,24 @@ func (a *App) renderGame(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	discovered := session.GetDiscoveredCharacters()
-
-	data := gameData{
+	return gameData{
 		World:                  session.World,
 		Location:               session.GetPlayerLocation(),
 		NearbyCharacters:       session.GetCharactersAtPlayerLocation(),
 		ChatMessages:           session.ChatMessages,
 		OffscreenConversations: offscreenConvs,
-		DiscoveredCharacters:   discovered,
+		DiscoveredCharacters:   session.GetDiscoveredCharacters(),
 		AvailableModels:        ai.AvailableModels,
 		ModelID:                session.ModelID,
 		IsSimulating:           session.IsSimulating,
 	}
+}
 
-	tmpl, err := a.parsePageTemplate("game.html")
-	if err != nil {
-		http.Error(w, "template error", 500)
-		log.Printf("Template error: %v", err)
-		return
-	}
+func (a *App) renderGame(w http.ResponseWriter, r *http.Request) {
+	data := a.buildGameData(a.Session)
 
 	w.Header().Set("Content-Type", "text/html")
-	if err := tmpl.ExecuteTemplate(w, "layout.html", data); err != nil {
+	if err := a.PageTemplates["game.html"].ExecuteTemplate(w, "layout.html", data); err != nil {
 		log.Printf("Render error: %v", err)
 	}
 }
@@ -295,7 +290,7 @@ func (a *App) ImportScenario(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	r.ParseMultipartForm(10 << 20) // 10MB
+	r.ParseMultipartForm(10 << 20)
 	file, _, err := r.FormFile("scenario")
 	if err != nil {
 		http.Error(w, "Failed to read file", 400)

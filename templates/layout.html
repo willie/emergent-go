@@ -89,6 +89,132 @@
                 if (arrow) arrow.classList.toggle('rotate-180');
             }
         }
+
+        // SSE-based chat streaming
+        let chatBusy = false;
+
+        function setChatBusy(busy) {
+            chatBusy = busy;
+            const sendBtn = document.getElementById('send-btn');
+            const contBtn = document.getElementById('continue-btn');
+            if (sendBtn) sendBtn.disabled = busy;
+            if (contBtn) contBtn.disabled = busy;
+        }
+
+        function streamChat(url, formData) {
+            setChatBusy(true);
+            const messages = document.getElementById('chat-messages');
+
+            // Create the assistant bubble that will accumulate tokens
+            const assistantDiv = document.createElement('div');
+            assistantDiv.className = 'flex justify-start';
+            assistantDiv.innerHTML = '<div class="max-w-4/5 rounded-lg px-4 py-2 bg-zinc-800 text-zinc-100"><div class="prose prose-invert max-w-none break-words whitespace-pre-wrap" id="stream-content"></div></div>';
+
+            fetch(url, {
+                method: 'POST',
+                body: formData
+            }).then(response => {
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder();
+                let buffer = '';
+                let streamStarted = false;
+
+                function processLine(line) {
+                    if (line.startsWith('event: ')) {
+                        buffer = ''; // clear data buffer for new event
+                        processLine._currentEvent = line.slice(7).trim();
+                        return;
+                    }
+                    if (line.startsWith('data: ')) {
+                        const data = line.slice(6);
+                        const event = processLine._currentEvent || '';
+
+                        if (event === 'user-message') {
+                            // Append user message bubble
+                            const div = document.createElement('div');
+                            div.innerHTML = data;
+                            while (div.firstChild) messages.appendChild(div.firstChild);
+                            scrollChat();
+                        } else if (event === 'token') {
+                            if (!streamStarted) {
+                                messages.appendChild(assistantDiv);
+                                streamStarted = true;
+                            }
+                            const target = document.getElementById('stream-content');
+                            if (target) target.textContent += data;
+                            scrollChat();
+                        } else if (event === 'error') {
+                            if (!streamStarted) {
+                                messages.appendChild(assistantDiv);
+                                streamStarted = true;
+                            }
+                            const target = document.getElementById('stream-content');
+                            if (target) {
+                                target.innerHTML += '<span class="text-red-400">Error: ' + data + '</span>';
+                            }
+                        } else if (event === 'oob') {
+                            // Process out-of-band swaps
+                            const temp = document.createElement('div');
+                            temp.innerHTML = data;
+                            temp.querySelectorAll('[hx-swap-oob]').forEach(el => {
+                                const targetId = el.id;
+                                const target = document.getElementById(targetId);
+                                if (target) {
+                                    target.innerHTML = el.innerHTML;
+                                }
+                            });
+                        } else if (event === 'done') {
+                            // Remove the temporary stream-content id so it doesn't conflict next time
+                            const target = document.getElementById('stream-content');
+                            if (target) target.removeAttribute('id');
+                            setChatBusy(false);
+                            scrollChat();
+                        }
+
+                        processLine._currentEvent = '';
+                    }
+                }
+                processLine._currentEvent = '';
+
+                function pump() {
+                    return reader.read().then(({ done, value }) => {
+                        if (done) {
+                            setChatBusy(false);
+                            return;
+                        }
+                        const text = decoder.decode(value, { stream: true });
+                        const lines = text.split('\n');
+                        for (const line of lines) {
+                            if (line.trim()) processLine(line);
+                        }
+                        return pump();
+                    });
+                }
+                return pump();
+            }).catch(err => {
+                console.error('Stream error:', err);
+                setChatBusy(false);
+            });
+        }
+
+        function sendChat(event) {
+            event.preventDefault();
+            if (chatBusy) return false;
+            const input = document.getElementById('chat-input');
+            const message = input.value.trim();
+            if (!message) return false;
+            input.value = '';
+
+            const formData = new FormData();
+            formData.append('message', message);
+            streamChat('/api/chat', formData);
+            return false;
+        }
+
+        function continueChat() {
+            if (chatBusy) return;
+            streamChat('/api/chat/continue', new FormData());
+        }
     </script>
 </body>
 </html>

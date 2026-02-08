@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -14,7 +15,20 @@ import (
 	"github.com/google/uuid"
 )
 
-// ChatSend handles a new chat message
+// writeSSE writes a single SSE event to the response
+func writeSSE(w http.ResponseWriter, flusher http.Flusher, event, data string) {
+	if event != "" {
+		fmt.Fprintf(w, "event: %s\n", event)
+	}
+	// SSE data lines: split on newlines so each gets "data: " prefix
+	for _, line := range strings.Split(data, "\n") {
+		fmt.Fprintf(w, "data: %s\n", line)
+	}
+	fmt.Fprint(w, "\n")
+	flusher.Flush()
+}
+
+// ChatSend handles a new chat message, returning an SSE stream
 func (a *App) ChatSend(w http.ResponseWriter, r *http.Request) {
 	if r.Method != "POST" {
 		http.Error(w, "Method not allowed", 405)
@@ -45,84 +59,7 @@ func (a *App) ChatSend(w http.ResponseWriter, r *http.Request) {
 	}
 	session.AddChatMessage(userMsg)
 
-	// Build messages for the AI
-	aiMessages := a.buildAIMessages(session)
-
-	// Build system prompt
-	systemPrompt := buildSystemPrompt(session.World)
-
-	// Build tools
-	tools := buildChatTools(session.World)
-
-	// Prepend system message
-	fullMessages := append([]ai.ChatMessage{
-		{Role: "system", Content: systemPrompt},
-	}, aiMessages...)
-
-	// Stream the response with SSE
-	w.Header().Set("Content-Type", "text/html")
-
-	// First, render the user message
-	fmt.Fprintf(w, `<div class="flex justify-end"><div class="max-w-4/5 rounded-lg px-4 py-2 bg-blue-600 text-white"><div class="prose prose-invert max-w-none break-words whitespace-pre-wrap">%s</div></div></div>`, escapeHTML(message))
-
-	// Now stream the assistant response
-	flusher, ok := w.(http.Flusher)
-	if !ok {
-		http.Error(w, "Streaming not supported", 500)
-		return
-	}
-
-	// Start the assistant message div
-	fmt.Fprintf(w, `<div class="flex justify-start"><div class="max-w-4/5 rounded-lg px-4 py-2 bg-zinc-800 text-zinc-100"><div class="prose prose-invert max-w-none break-words whitespace-pre-wrap" id="stream-content">`)
-	flusher.Flush()
-
-	model := session.ModelID
-	if model == "" {
-		model = ai.Models.MainConversation
-	}
-
-	result, err := ai.StreamText(model, fullMessages, tools, func(content string) {
-		fmt.Fprint(w, escapeHTML(content))
-		flusher.Flush()
-	})
-
-	if err != nil {
-		fmt.Fprintf(w, `<span class="text-red-400">Error: %s</span>`, escapeHTML(err.Error()))
-		fmt.Fprint(w, `</div></div></div>`)
-		flusher.Flush()
-		return
-	}
-
-	// Close the assistant message div
-	fmt.Fprint(w, `</div></div></div>`)
-	flusher.Flush()
-
-	// Save assistant message
-	assistantContent := result.Content
-	assistantMsg := models.ChatMessage{
-		ID:      uuid.New().String(),
-		Role:    "assistant",
-		Content: assistantContent,
-	}
-	session.AddChatMessage(assistantMsg)
-
-	// Process tool calls
-	if len(result.ToolCalls) > 0 {
-		a.processToolCalls(session, result.ToolCalls, assistantMsg.ID)
-	}
-
-	// Persist state
-	if err := session.Persist(); err != nil {
-		log.Printf("Failed to persist state: %v", err)
-	}
-
-	// If state changed due to tool calls, add a header refresh hint
-	if len(result.ToolCalls) > 0 {
-		// Add an HX-Trigger to refresh the page header and sidebar
-		// We'll use a script to do a full page refresh since state changed
-		fmt.Fprintf(w, `<script>setTimeout(function(){window.location.reload()},500)</script>`)
-		flusher.Flush()
-	}
+	a.streamResponse(w, r, session, &userMsg)
 }
 
 // ChatContinue generates another assistant response
@@ -140,6 +77,30 @@ func (a *App) ChatContinue(w http.ResponseWriter, r *http.Request) {
 
 	session.AdvanceTime(1, "")
 
+	a.streamResponse(w, r, session, nil)
+}
+
+// streamResponse runs the LLM and streams SSE events
+func (a *App) streamResponse(w http.ResponseWriter, r *http.Request, session *world.SessionState, userMsg *models.ChatMessage) {
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "Streaming not supported", 500)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+
+	// Send user message bubble if present
+	if userMsg != nil {
+		html := fmt.Sprintf(
+			`<div class="flex justify-end"><div class="max-w-4/5 rounded-lg px-4 py-2 bg-blue-600 text-white"><div class="prose prose-invert max-w-none break-words whitespace-pre-wrap">%s</div></div></div>`,
+			escapeHTML(userMsg.Content))
+		writeSSE(w, flusher, "user-message", html)
+	}
+
+	// Build AI messages
 	aiMessages := a.buildAIMessages(session)
 	systemPrompt := buildSystemPrompt(session.World)
 	tools := buildChatTools(session.World)
@@ -148,50 +109,175 @@ func (a *App) ChatContinue(w http.ResponseWriter, r *http.Request) {
 		{Role: "system", Content: systemPrompt},
 	}, aiMessages...)
 
-	w.Header().Set("Content-Type", "text/html")
-
-	flusher, ok := w.(http.Flusher)
-	if !ok {
-		http.Error(w, "Streaming not supported", 500)
-		return
-	}
-
-	fmt.Fprintf(w, `<div class="flex justify-start"><div class="max-w-4/5 rounded-lg px-4 py-2 bg-zinc-800 text-zinc-100"><div class="prose prose-invert max-w-none break-words whitespace-pre-wrap">`)
-	flusher.Flush()
-
 	model := session.ModelID
 	if model == "" {
 		model = ai.Models.MainConversation
 	}
 
+	// Stream tokens
 	result, err := ai.StreamText(model, fullMessages, tools, func(content string) {
-		fmt.Fprint(w, escapeHTML(content))
-		flusher.Flush()
+		writeSSE(w, flusher, "token", escapeHTML(content))
 	})
 
 	if err != nil {
-		fmt.Fprintf(w, `<span class="text-red-400">Error: %s</span>`, escapeHTML(err.Error()))
+		writeSSE(w, flusher, "error", escapeHTML(err.Error()))
+		writeSSE(w, flusher, "done", "")
+		return
 	}
 
-	fmt.Fprint(w, `</div></div></div>`)
-	flusher.Flush()
-
-	if result != nil {
-		assistantMsg := models.ChatMessage{
-			ID:      uuid.New().String(),
-			Role:    "assistant",
-			Content: result.Content,
-		}
-		session.AddChatMessage(assistantMsg)
-
-		if len(result.ToolCalls) > 0 {
-			a.processToolCalls(session, result.ToolCalls, assistantMsg.ID)
-			fmt.Fprintf(w, `<script>setTimeout(function(){window.location.reload()},500)</script>`)
-			flusher.Flush()
-		}
-
-		_ = session.Persist()
+	// Save assistant message
+	assistantMsg := models.ChatMessage{
+		ID:      uuid.New().String(),
+		Role:    "assistant",
+		Content: result.Content,
 	}
+	session.AddChatMessage(assistantMsg)
+
+	// Process tool calls and build OOB updates
+	if len(result.ToolCalls) > 0 {
+		a.processToolCalls(session, result.ToolCalls, assistantMsg.ID)
+
+		// Render OOB swap fragments for changed state
+		oobHTML := a.renderOOBUpdates(session)
+		if oobHTML != "" {
+			writeSSE(w, flusher, "oob", oobHTML)
+		}
+	}
+
+	// Persist state
+	if err := session.Persist(); err != nil {
+		log.Printf("Failed to persist state: %v", err)
+	}
+
+	writeSSE(w, flusher, "done", "")
+}
+
+// renderOOBUpdates renders out-of-band swap HTML for header, sidebar, etc.
+func (a *App) renderOOBUpdates(session *world.SessionState) string {
+	var buf strings.Builder
+
+	// Location name
+	location := session.GetPlayerLocation()
+	locName := "Unknown"
+	if location != nil {
+		locName = location.CanonicalName
+	}
+	fmt.Fprintf(&buf, `<span id="location-name" hx-swap-oob="innerHTML">%s</span>`, escapeHTML(locName))
+
+	// Narrative time
+	fmt.Fprintf(&buf, `<span id="narrative-time" hx-swap-oob="innerHTML">%s</span>`, escapeHTML(session.World.Time.NarrativeTime))
+
+	// Tick count
+	fmt.Fprintf(&buf, `<div id="tick-count" hx-swap-oob="innerHTML">tick %d</div>`, session.World.Time.Tick)
+
+	// Present characters
+	nearby := session.GetCharactersAtPlayerLocation()
+	var names []string
+	for _, c := range nearby {
+		names = append(names, escapeHTML(c.Name))
+	}
+	presentHTML := strings.Join(names, ", ")
+	fmt.Fprintf(&buf, `<span id="present-chars" hx-swap-oob="innerHTML">%s</span>`, presentHTML)
+
+	// Offscreen conversations
+	offscreenHTML := a.renderOffscreenPartial(session)
+	fmt.Fprintf(&buf, `<div id="offscreen-content" hx-swap-oob="innerHTML">%s</div>`, offscreenHTML)
+
+	// Characters list
+	charsHTML := a.renderCharactersPartial(session)
+	fmt.Fprintf(&buf, `<div id="characters-content" hx-swap-oob="innerHTML">%s</div>`, charsHTML)
+
+	return buf.String()
+}
+
+// renderOffscreenPartial renders the offscreen conversations HTML
+func (a *App) renderOffscreenPartial(session *world.SessionState) string {
+	convs := session.GetOffscreenConversations()
+	if len(convs) == 0 {
+		return `<div class="p-4 text-sm text-zinc-600 text-center"><p>No other conversations happening right now.</p><p class="mt-2 text-xs">When characters interact without you, their conversations will appear here.</p></div>`
+	}
+
+	var buf strings.Builder
+	for _, conv := range convs {
+		var names []string
+		for _, pid := range conv.ParticipantIDs {
+			c := session.GetCharacterByID(pid)
+			if c != nil {
+				names = append(names, escapeHTML(c.Name))
+			}
+		}
+		locName := "Unknown"
+		loc := session.GetLocationCluster(conv.LocationClusterID)
+		if loc != nil {
+			locName = loc.CanonicalName
+		}
+
+		fmt.Fprintf(&buf, `<div class="border-b border-zinc-800">`)
+		fmt.Fprintf(&buf, `<button onclick="toggleOffscreen('%s')" class="w-full px-4 py-3 flex items-center justify-between hover:bg-zinc-900 transition-colors text-left">`, conv.ID)
+		fmt.Fprintf(&buf, `<div class="flex flex-col gap-0.5"><span class="text-sm font-medium text-zinc-200">%s</span>`, strings.Join(names, " &amp; "))
+		fmt.Fprintf(&buf, `<span class="text-xs text-zinc-500">%s</span></div>`, escapeHTML(locName))
+		fmt.Fprintf(&buf, `<svg id="offscreen-arrow-%s" class="w-4 h-4 text-zinc-500 transition-transform rotate-180" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>`, conv.ID)
+		fmt.Fprintf(&buf, `</button>`)
+		fmt.Fprintf(&buf, `<div id="offscreen-detail-%s" class="max-h-64 overflow-y-auto px-4 pb-4 space-y-2">`, conv.ID)
+		if len(conv.Messages) == 0 {
+			buf.WriteString(`<p class="text-xs text-zinc-600 italic">Nothing yet...</p>`)
+		} else {
+			for _, msg := range conv.Messages {
+				buf.WriteString(`<div class="text-sm">`)
+				if msg.SpeakerID != "" {
+					speaker := session.GetCharacterByID(msg.SpeakerID)
+					if speaker != nil {
+						fmt.Fprintf(&buf, `<span class="font-medium text-zinc-400">%s: </span>`, escapeHTML(speaker.Name))
+					}
+				}
+				fmt.Fprintf(&buf, `<span class="text-zinc-300">%s</span></div>`, escapeHTML(msg.Content))
+			}
+		}
+		buf.WriteString(`</div></div>`)
+	}
+	return buf.String()
+}
+
+// renderCharactersPartial renders the characters list HTML
+func (a *App) renderCharactersPartial(session *world.SessionState) string {
+	chars := session.GetDiscoveredCharacters()
+	if len(chars) == 0 {
+		return `<div class="p-4 text-sm text-zinc-600 text-center">No characters discovered yet.</div>`
+	}
+
+	var buf bytes.Buffer
+	tmpl := a.PageTemplates["game.html"]
+	if tmpl == nil {
+		// Fallback: build inline
+		var sb strings.Builder
+		sb.WriteString(`<div class="flex flex-col">`)
+		for _, c := range chars {
+			locName := "Unknown"
+			loc := session.GetLocationCluster(c.CurrentLocationClusterID)
+			if loc != nil {
+				locName = loc.CanonicalName
+			}
+			fmt.Fprintf(&sb, `<div class="border-b border-zinc-800">
+				<button onclick="toggleCharacter('%s')" class="w-full px-4 py-3 flex items-center justify-between hover:bg-zinc-900 transition-colors text-left">
+				<div class="flex flex-col gap-0.5 flex-1 mr-4"><span class="text-sm font-medium text-zinc-200">%s</span>
+				<span class="text-xs text-zinc-500">%s</span></div>
+				<svg id="char-arrow-%s" class="w-4 h-4 text-zinc-500 transition-transform" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+				</button>
+				<div id="char-detail-%s" class="hidden px-4 pb-4 space-y-3"><p class="text-sm text-zinc-400">%s</p></div>
+				</div>`,
+				c.ID, escapeHTML(c.Name), escapeHTML(locName), c.ID, c.ID, escapeHTML(c.Description))
+		}
+		sb.WriteString(`</div>`)
+		return sb.String()
+	}
+
+	// Use the cached template's character_list block
+	data := a.buildGameData(session)
+	if err := tmpl.ExecuteTemplate(&buf, "character_list", data); err != nil {
+		log.Printf("renderCharactersPartial error: %v", err)
+		return `<div class="p-4 text-sm text-zinc-600 text-center">Error rendering characters.</div>`
+	}
+	return buf.String()
 }
 
 func (a *App) buildAIMessages(session *world.SessionState) []ai.ChatMessage {
@@ -432,7 +518,6 @@ func (a *App) handleMoveToLocation(session *world.SessionState, tc ai.ToolCall, 
 	}
 	previousLocationID := player.CurrentLocationClusterID
 
-	// Resolve location
 	var clusters []struct {
 		ID            string `json:"id"`
 		CanonicalName string `json:"canonicalName"`
@@ -446,7 +531,6 @@ func (a *App) handleMoveToLocation(session *world.SessionState, tc ai.ToolCall, 
 
 	resolved, err := world.ResolveLocation(args.Destination, clusters, session.ModelID)
 	if err != nil || resolved == nil {
-		// Fallback
 		name := world.ExtractCanonicalName(args.Destination)
 		resolved = &world.ResolveLocationResult{
 			ClusterID:     nil,
@@ -529,7 +613,6 @@ func (a *App) handleDiscoverCharacter(session *world.SessionState, tc ai.ToolCal
 	if match != nil {
 		session.DiscoverCharacter(match.ID)
 	} else {
-		// Create new character
 		player := session.GetPlayerCharacter()
 		locationID := ""
 		if player != nil {
