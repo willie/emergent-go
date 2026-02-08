@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"html/template"
@@ -15,6 +16,8 @@ import (
 	"emergent/internal/world"
 
 	"github.com/google/uuid"
+	"github.com/yuin/goldmark"
+	"github.com/yuin/goldmark/renderer/html"
 )
 
 // App holds the application state and dependencies
@@ -26,6 +29,10 @@ type App struct {
 
 // NewApp creates a new app with templates compiled at startup
 func NewApp() (*App, error) {
+	md := goldmark.New(
+		goldmark.WithRendererOptions(html.WithHardWraps()),
+	)
+
 	funcMap := template.FuncMap{
 		"lastN": func(items []models.KnowledgeEntry, n int) []models.KnowledgeEntry {
 			if len(items) <= n {
@@ -40,6 +47,13 @@ func NewApp() (*App, error) {
 				}
 			}
 			return "Unknown"
+		},
+		"renderMarkdown": func(s string) template.HTML {
+			var buf bytes.Buffer
+			if err := md.Convert([]byte(s), &buf); err != nil {
+				return template.HTML(template.HTMLEscapeString(s))
+			}
+			return template.HTML(buf.String())
 		},
 	}
 

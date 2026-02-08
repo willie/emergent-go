@@ -95,7 +95,7 @@ func (a *App) streamResponse(w http.ResponseWriter, r *http.Request, session *wo
 	// Send user message bubble if present
 	if userMsg != nil {
 		html := fmt.Sprintf(
-			`<div class="flex justify-end"><div class="max-w-4/5 rounded-lg px-4 py-2 bg-blue-600 text-white"><div class="prose prose-invert max-w-none break-words whitespace-pre-wrap">%s</div></div></div>`,
+			`<div class="flex justify-end"><div class="max-w-[80%%] rounded-lg px-4 py-2 bg-blue-600 text-white"><div class="prose prose-invert max-w-none break-words whitespace-pre-wrap">%s</div></div></div>`,
 			escapeHTML(userMsg.Content))
 		writeSSE(w, flusher, "user-message", html)
 	}

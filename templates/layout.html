@@ -6,11 +6,23 @@
     <title>Emergent World</title>
     <script src="https://unpkg.com/htmx.org@2.0.4"></script>
     <script src="https://unpkg.com/htmx-ext-sse@2.2.2/sse.js"></script>
-    <link rel="stylesheet" href="/static/css/style.css">
+    <script src="https://cdn.tailwindcss.com?plugins=typography"></script>
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <style>
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: #3f3f46; border-radius: 3px; }
+        ::-webkit-scrollbar-thumb:hover { background: #52525b; }
+    </style>
 </head>
 <body class="bg-zinc-950 text-zinc-100">
     {{block "content" .}}{{end}}
     <script>
+        // Configure marked for markdown rendering
+        if (typeof marked !== 'undefined') {
+            marked.setOptions({ breaks: true });
+        }
+
         // Auto-scroll chat to bottom
         function scrollChat() {
             const el = document.getElementById('chat-messages');
@@ -108,7 +120,7 @@
             // Create the assistant bubble that will accumulate tokens
             const assistantDiv = document.createElement('div');
             assistantDiv.className = 'flex justify-start';
-            assistantDiv.innerHTML = '<div class="max-w-4/5 rounded-lg px-4 py-2 bg-zinc-800 text-zinc-100"><div class="prose prose-invert max-w-none break-words whitespace-pre-wrap" id="stream-content"></div></div>';
+            assistantDiv.innerHTML = '<div class="max-w-[80%] rounded-lg px-4 py-2 bg-zinc-800 text-zinc-100"><div class="prose prose-invert max-w-none break-words whitespace-pre-wrap" id="stream-content"></div></div>';
 
             fetch(url, {
                 method: 'POST',
@@ -164,9 +176,16 @@
                                 }
                             });
                         } else if (event === 'done') {
-                            // Remove the temporary stream-content id so it doesn't conflict next time
+                            // Render accumulated text as markdown, then remove temp id
                             const target = document.getElementById('stream-content');
-                            if (target) target.removeAttribute('id');
+                            if (target) {
+                                const raw = target.textContent;
+                                if (typeof marked !== 'undefined' && raw) {
+                                    target.classList.remove('whitespace-pre-wrap');
+                                    target.innerHTML = marked.parse(raw);
+                                }
+                                target.removeAttribute('id');
+                            }
                             setChatBusy(false);
                             scrollChat();
                         }
