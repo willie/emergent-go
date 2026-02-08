@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+    <title>Emergent World</title>
+    <script src="https://unpkg.com/htmx.org@2.0.4"></script>
+    <script src="https://unpkg.com/htmx-ext-sse@2.2.2/sse.js"></script>
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body class="bg-zinc-950 text-zinc-100">
+    {{block "content" .}}{{end}}
+    <script>
+        // Auto-scroll chat to bottom
+        function scrollChat() {
+            const el = document.getElementById('chat-messages');
+            if (el) el.scrollTop = el.scrollHeight;
+        }
+        // After HTMX swaps, scroll chat
+        document.addEventListener('htmx:afterSwap', function(e) {
+            if (e.detail.target.id === 'chat-messages' || e.detail.target.closest('#chat-messages')) {
+                scrollChat();
+            }
+        });
+        document.addEventListener('htmx:sseMessage', function() {
+            scrollChat();
+        });
+
+        // Toggle sidebar tabs
+        function showTab(tab) {
+            document.getElementById('tab-elsewhere').classList.toggle('hidden', tab !== 'elsewhere');
+            document.getElementById('tab-characters').classList.toggle('hidden', tab !== 'characters');
+            document.querySelectorAll('[data-tab-btn]').forEach(btn => {
+                const isActive = btn.dataset.tabBtn === tab;
+                btn.classList.toggle('text-zinc-100', isActive);
+                btn.classList.toggle('border-b-2', isActive);
+                btn.classList.toggle('border-blue-500', isActive);
+                btn.classList.toggle('text-zinc-500', !isActive);
+            });
+        }
+
+        // Mobile navigation
+        function showMobileView(view) {
+            const chat = document.getElementById('main-chat');
+            const sidebar = document.getElementById('sidebar');
+            if (view === 'chat') {
+                chat.classList.remove('hidden');
+                chat.classList.add('flex');
+                sidebar.classList.add('hidden');
+                sidebar.classList.remove('flex');
+            } else {
+                chat.classList.add('hidden');
+                chat.classList.remove('flex');
+                sidebar.classList.remove('hidden');
+                sidebar.classList.add('flex');
+                if (view === 'locations') showTab('elsewhere');
+                if (view === 'people') showTab('characters');
+            }
+            document.querySelectorAll('[data-mobile-nav]').forEach(btn => {
+                btn.classList.toggle('text-blue-500', btn.dataset.mobileNav === view);
+                btn.classList.toggle('text-zinc-500', btn.dataset.mobileNav !== view);
+            });
+        }
+
+        // Dialog management
+        function openDialog(id) {
+            document.getElementById(id).classList.remove('hidden');
+        }
+        function closeDialog(id) {
+            document.getElementById(id).classList.add('hidden');
+        }
+
+        // Character panel expand/collapse
+        function toggleCharacter(id) {
+            const el = document.getElementById('char-detail-' + id);
+            const arrow = document.getElementById('char-arrow-' + id);
+            if (el) {
+                el.classList.toggle('hidden');
+                if (arrow) arrow.classList.toggle('rotate-180');
+            }
+        }
+
+        // Offscreen panel expand/collapse
+        function toggleOffscreen(id) {
+            const el = document.getElementById('offscreen-detail-' + id);
+            const arrow = document.getElementById('offscreen-arrow-' + id);
+            if (el) {
+                el.classList.toggle('hidden');
+                if (arrow) arrow.classList.toggle('rotate-180');
+            }
+        }
+    </script>
+</body>
+</html>

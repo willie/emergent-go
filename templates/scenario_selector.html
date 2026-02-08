@@ -1,0 +1,136 @@
+{{define "content"}}
+<div class="h-dvh flex flex-col items-center justify-center p-4 bg-zinc-950 text-zinc-100 max-w-4xl mx-auto w-full">
+    <div class="w-full mb-8 text-center">
+        <h1 class="text-4xl font-bold mb-2 bg-gradient-to-r from-blue-400 to-indigo-500 bg-clip-text text-transparent">
+            Emergent World
+        </h1>
+        <p class="text-zinc-500">Select a scenario to begin or load a saved game.</p>
+    </div>
+
+    <div class="w-full bg-zinc-900 border border-zinc-800 rounded-xl overflow-hidden shadow-2xl flex flex-col min-h-[500px]">
+        <!-- Tabs -->
+        <div class="p-4 border-b border-zinc-800 bg-zinc-900/50 flex justify-center">
+            <div class="inline-flex p-1 bg-zinc-950/50 rounded-lg" id="menu-tabs">
+                <button onclick="showMenuTab('new')" data-menu-tab="new"
+                    class="px-6 py-2 text-sm font-medium rounded-md transition-all duration-200 bg-zinc-800 text-zinc-100 shadow-sm">
+                    New Game
+                </button>
+                <button onclick="showMenuTab('load')" data-menu-tab="load"
+                    class="px-6 py-2 text-sm font-medium rounded-md transition-all duration-200 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/50">
+                    Load Game
+                </button>
+            </div>
+        </div>
+
+        <!-- New Game Tab -->
+        <div id="tab-new" class="flex-1 p-6 md:p-8 overflow-y-auto">
+            <div class="space-y-6">
+                <div class="flex justify-between items-center">
+                    <h2 class="text-xl font-semibold text-zinc-200">Start New Game</h2>
+                    <button onclick="openDialog('import-dialog')"
+                        class="px-3 py-1.5 text-xs bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded border border-zinc-700 transition-colors">
+                        Import JSON
+                    </button>
+                </div>
+                <div class="grid gap-4">
+                    {{range $idx, $scenario := .Scenarios}}
+                    <form method="POST" action="/game/new">
+                        <input type="hidden" name="scenario_index" value="{{$idx}}">
+                        <button type="submit" class="w-full text-left group relative p-5 rounded-lg border border-zinc-700 bg-zinc-800/30 hover:bg-zinc-800/80 hover:border-blue-500/50 cursor-pointer transition-all">
+                            <h3 class="text-xl font-medium text-zinc-200 group-hover:text-blue-400 mb-2">
+                                {{$scenario.Title}}
+                            </h3>
+                            <p class="text-sm text-zinc-400 leading-relaxed h-12 overflow-hidden text-ellipsis line-clamp-2">
+                                {{$scenario.Description}}
+                            </p>
+                            <div class="mt-4 flex gap-4 text-xs text-zinc-500">
+                                <span>{{len $scenario.Locations}} Locations</span>
+                                <span>{{len $scenario.Characters}} Characters</span>
+                                <span class="text-zinc-600">Built-in</span>
+                            </div>
+                        </button>
+                    </form>
+                    {{end}}
+
+                    {{range $idx, $scenario := .CustomScenarios}}
+                    <form method="POST" action="/game/new-custom">
+                        <input type="hidden" name="scenario_index" value="{{$idx}}">
+                        <button type="submit" class="w-full text-left group relative p-5 rounded-lg border border-zinc-700 bg-zinc-800/30 hover:bg-zinc-800/80 hover:border-blue-500/50 cursor-pointer transition-all">
+                            <h3 class="text-xl font-medium text-zinc-200 group-hover:text-blue-400 mb-2">
+                                {{$scenario.Title}}
+                            </h3>
+                            <p class="text-sm text-zinc-400 leading-relaxed h-12 overflow-hidden text-ellipsis line-clamp-2">
+                                {{$scenario.Description}}
+                            </p>
+                            <div class="mt-4 flex gap-4 text-xs text-zinc-500">
+                                <span>{{len $scenario.Locations}} Locations</span>
+                                <span>{{len $scenario.Characters}} Characters</span>
+                                <span class="text-zinc-600">Custom</span>
+                            </div>
+                        </button>
+                    </form>
+                    {{end}}
+                </div>
+            </div>
+        </div>
+
+        <!-- Load Game Tab -->
+        <div id="tab-load" class="flex-1 p-6 md:p-8 overflow-y-auto hidden">
+            <div class="space-y-4">
+                <h2 class="text-xl font-semibold text-zinc-200 mb-6">Load Game</h2>
+                {{if .Saves}}
+                <div class="space-y-2">
+                    {{range .Saves}}
+                    <a href="/game/load?save={{.ID}}"
+                        class="group flex items-center justify-between p-4 rounded-lg border border-zinc-700 bg-zinc-800/30 hover:bg-zinc-800 cursor-pointer transition-all">
+                        <div>
+                            <h3 class="font-medium text-zinc-200 group-hover:text-blue-400">{{.DisplayName}}</h3>
+                            <p class="text-xs text-zinc-500 mt-1">Last played: {{.UpdatedAt}}</p>
+                        </div>
+                        <svg class="text-zinc-600 group-hover:text-blue-500" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M5 12h14"/><path d="m12 5 7 7-7 7"/>
+                        </svg>
+                    </a>
+                    {{end}}
+                </div>
+                {{else}}
+                <p class="text-zinc-500 italic">No saved games found.</p>
+                {{end}}
+            </div>
+        </div>
+    </div>
+
+    <!-- Import Dialog -->
+    <div id="import-dialog" class="fixed inset-0 bg-black/50 flex items-center justify-center z-50 px-4 hidden">
+        <div class="bg-zinc-900 border border-zinc-700 rounded-lg p-6 w-full max-w-md shadow-xl flex flex-col gap-4">
+            <h3 class="text-xl font-medium text-zinc-100">Import Scenario</h3>
+            <p class="text-sm text-zinc-400">Upload a JSON file containing a valid scenario definition.</p>
+            <div id="import-error" class="hidden bg-red-900/50 border border-red-800 text-red-200 text-sm p-3 rounded"></div>
+            <form method="POST" action="/scenario/import" enctype="multipart/form-data"
+                class="flex justify-center border-2 border-dashed border-zinc-700 rounded-lg p-8 hover:border-zinc-500 transition-colors cursor-pointer">
+                <div class="text-center">
+                    <p class="text-zinc-300 font-medium">Click to select file</p>
+                    <p class="text-zinc-500 text-xs mt-1">.json files only</p>
+                    <input type="file" name="scenario" accept=".json" class="mt-2"
+                        onchange="this.form.submit()">
+                </div>
+            </form>
+            <div class="flex justify-end gap-2 mt-2">
+                <button onclick="closeDialog('import-dialog')" class="px-4 py-2 text-zinc-400 hover:text-zinc-200">Cancel</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+function showMenuTab(tab) {
+    document.getElementById('tab-new').classList.toggle('hidden', tab !== 'new');
+    document.getElementById('tab-load').classList.toggle('hidden', tab !== 'load');
+    document.querySelectorAll('[data-menu-tab]').forEach(btn => {
+        const active = btn.dataset.menuTab === tab;
+        btn.className = 'px-6 py-2 text-sm font-medium rounded-md transition-all duration-200 ' +
+            (active ? 'bg-zinc-800 text-zinc-100 shadow-sm' : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/50');
+    });
+}
+</script>
+{{end}}
