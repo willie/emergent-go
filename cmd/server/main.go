@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"log"
+	"log/slog"
 	"net/http"
 	"os"
 
@@ -11,6 +12,9 @@ import (
 )
 
 func main() {
+	// Structured JSON logging
+	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, nil)))
+
 	// Initialize AI client
 	ai.Init()
 
@@ -48,5 +52,5 @@ func main() {
 	}
 
 	fmt.Printf("Emergent World server starting on http://localhost:%s\n", port)
-	log.Fatal(http.ListenAndServe(":"+port, mux))
+	log.Fatal(http.ListenAndServe(":"+port, handlers.LogRequest(mux)))
 }

@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 
 	"emergent/internal/ai"
 	"emergent/internal/models"
@@ -20,11 +21,13 @@ import (
 	"github.com/yuin/goldmark/renderer/html"
 )
 
+const sessionCookieName = "emergent_session"
+
 // App holds the application state and dependencies
 type App struct {
 	PageTemplates map[string]*template.Template
 	FuncMap       template.FuncMap
-	Session       *world.SessionState
+	sessions      sync.Map // map[string]*world.SessionState
 }
 
 // NewApp creates a new app with templates compiled at startup
@@ -67,14 +70,37 @@ func NewApp() (*App, error) {
 		pages[page] = tmpl
 	}
 
-	session := world.NewSessionState()
-	_ = session.Load("surat-world-storage")
-
 	return &App{
 		PageTemplates: pages,
 		FuncMap:       funcMap,
-		Session:       session,
 	}, nil
+}
+
+// getSession retrieves the session for this request, creating one if needed.
+// It reads the session ID from a cookie, looks it up in the map, and creates
+// a fresh session (with cookie) if none exists.
+func (a *App) getSession(w http.ResponseWriter, r *http.Request) *world.SessionState {
+	if cookie, err := r.Cookie(sessionCookieName); err == nil {
+		if val, ok := a.sessions.Load(cookie.Value); ok {
+			return val.(*world.SessionState)
+		}
+	}
+
+	// Create new session
+	id := uuid.New().String()
+	session := world.NewSessionState()
+
+	http.SetCookie(w, &http.Cookie{
+		Name:     sessionCookieName,
+		Value:    id,
+		Path:     "/",
+		MaxAge:   30 * 24 * 60 * 60, // 30 days
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+	})
+
+	a.sessions.Store(id, session)
+	return session
 }
 
 // compilePageTemplate parses layout + a specific page template + partials into one set
@@ -101,14 +127,15 @@ func (a *App) Index(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	if a.Session.World == nil {
-		a.renderScenarioSelector(w, r)
+	session := a.getSession(w, r)
+	if session.World == nil {
+		a.renderScenarioSelector(w, r, session)
 		return
 	}
-	a.renderGame(w, r)
+	a.renderGame(w, r, session)
 }
 
-func (a *App) renderScenarioSelector(w http.ResponseWriter, r *http.Request) {
+func (a *App) renderScenarioSelector(w http.ResponseWriter, r *http.Request, session *world.SessionState) {
 	saves, _ := storage.List()
 	type saveDisplay struct {
 		ID          string
@@ -206,8 +233,8 @@ func (a *App) buildGameData(session *world.SessionState) gameData {
 	}
 }
 
-func (a *App) renderGame(w http.ResponseWriter, r *http.Request) {
-	data := a.buildGameData(a.Session)
+func (a *App) renderGame(w http.ResponseWriter, r *http.Request, session *world.SessionState) {
+	data := a.buildGameData(session)
 
 	w.Header().Set("Content-Type", "text/html")
 	if err := a.PageTemplates["game.html"].ExecuteTemplate(w, "layout.html", data); err != nil {
@@ -229,11 +256,12 @@ func (a *App) NewGame(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	session := a.getSession(w, r)
 	scenario := world.BuiltinScenarios[idx]
 	saveKey := fmt.Sprintf("surat-world-storage-game-%d", uuid.New().ID())
-	a.Session.ActiveSaveKey = saveKey
+	session.ActiveSaveKey = saveKey
 
-	if err := a.Session.InitializeScenario(scenario); err != nil {
+	if err := session.InitializeScenario(scenario); err != nil {
 		http.Error(w, "Failed to initialize: "+err.Error(), 500)
 		return
 	}
@@ -263,11 +291,12 @@ func (a *App) NewCustomGame(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	session := a.getSession(w, r)
 	scenario := customScenarios[idx]
 	saveKey := fmt.Sprintf("surat-world-storage-game-%d", uuid.New().ID())
-	a.Session.ActiveSaveKey = saveKey
+	session.ActiveSaveKey = saveKey
 
-	if err := a.Session.InitializeScenario(scenario); err != nil {
+	if err := session.InitializeScenario(scenario); err != nil {
 		http.Error(w, "Failed to initialize: "+err.Error(), 500)
 		return
 	}
@@ -283,7 +312,8 @@ func (a *App) LoadGame(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := a.Session.Load(saveID); err != nil {
+	session := a.getSession(w, r)
+	if err := session.Load(saveID); err != nil {
 		log.Printf("Failed to load save %s: %v", saveID, err)
 	}
 
@@ -292,8 +322,9 @@ func (a *App) LoadGame(w http.ResponseWriter, r *http.Request) {
 
 // ExitGame exits to the main menu
 func (a *App) ExitGame(w http.ResponseWriter, r *http.Request) {
-	_ = a.Session.Persist()
-	a.Session.ResetWorld()
+	session := a.getSession(w, r)
+	_ = session.Persist()
+	session.ResetWorld()
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 
@@ -338,15 +369,17 @@ func (a *App) SetModel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	r.ParseForm()
+	session := a.getSession(w, r)
 	model := r.FormValue("model")
 	if model != "" {
-		a.Session.ModelID = model
+		session.ModelID = model
 	}
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 
 // PartialSaves returns the saves list as HTML partial
 func (a *App) PartialSaves(w http.ResponseWriter, r *http.Request) {
+	session := a.getSession(w, r)
 	saves, _ := storage.List()
 	w.Header().Set("Content-Type", "text/html")
 
@@ -358,7 +391,7 @@ func (a *App) PartialSaves(w http.ResponseWriter, r *http.Request) {
 		if s.ID != "surat-world-storage" {
 			name = strings.ReplaceAll(strings.TrimPrefix(s.ID, "surat-world-storage-"), "-", " ")
 		}
-		isActive := s.ID == a.Session.ActiveSaveKey
+		isActive := s.ID == session.ActiveSaveKey
 
 		activeClass := "bg-zinc-800/50 border-zinc-700 hover:bg-zinc-800"
 		nameClass := "text-zinc-200"

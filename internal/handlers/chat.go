@@ -44,7 +44,7 @@ func (a *App) ChatSend(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	session := a.Session
+	session := a.getSession(w, r)
 	if session.World == nil {
 		http.Error(w, "No active game", 400)
 		return
@@ -71,7 +71,7 @@ func (a *App) ChatContinue(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	session := a.Session
+	session := a.getSession(w, r)
 	if session.World == nil {
 		http.Error(w, "No active game", 400)
 		return
