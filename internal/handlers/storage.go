@@ -19,7 +19,8 @@ func (a *App) StorageHandler(w http.ResponseWriter, r *http.Request) {
 	case "DELETE":
 		a.storageDelete(w, r)
 	default:
-		http.Error(w, `{"error":"method not allowed"}`, 405)
+		w.WriteHeader(405)
+		json.NewEncoder(w).Encode(map[string]string{"error": "method not allowed"})
 	}
 }
 

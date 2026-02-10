@@ -7,10 +7,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"os"
 	"strings"
+	"time"
 )
+
+const apiURL = "https://openrouter.ai/api/v1/chat/completions"
 
 var apiKey string
 
@@ -37,8 +41,49 @@ var AvailableModels = []string{
 func Init() {
 	apiKey = os.Getenv("OPENROUTER_API_KEY")
 	if apiKey == "" {
-		fmt.Println("WARNING: OPENROUTER_API_KEY not set")
+		slog.Warn("OPENROUTER_API_KEY not set")
 	}
+}
+
+// doWithRetry executes an HTTP request, retrying on transient errors (5xx, network).
+// The caller must close resp.Body on success.
+func doWithRetry(ctx context.Context, buildReq func() (*http.Request, error)) (*http.Response, error) {
+	backoff := []time.Duration{0, 1 * time.Second, 2 * time.Second, 4 * time.Second}
+	var lastErr error
+
+	for attempt, delay := range backoff {
+		if attempt > 0 {
+			slog.Warn("retrying API request", "attempt", attempt+1, "backoff", delay)
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(delay):
+			}
+		}
+
+		req, err := buildReq()
+		if err != nil {
+			return nil, err
+		}
+
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			lastErr = fmt.Errorf("do request: %w", err)
+			continue
+		}
+
+		// Retry on 5xx (server) and 429 (rate limit)
+		if resp.StatusCode >= 500 || resp.StatusCode == 429 {
+			body, _ := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			lastErr = fmt.Errorf("API error %d: %s", resp.StatusCode, string(body))
+			continue
+		}
+
+		return resp, nil
+	}
+
+	return nil, lastErr
 }
 
 // ToolFunction defines a tool the model can call
@@ -65,6 +110,7 @@ type ChatMessage struct {
 
 // ToolCall from the model
 type ToolCall struct {
+	Index    int          `json:"index"`
 	ID       string       `json:"id"`
 	Type     string       `json:"type"`
 	Function FunctionCall `json:"function"`
@@ -136,16 +182,17 @@ func GenerateText(ctx context.Context, model string, messages []ChatMessage, too
 		return nil, fmt.Errorf("marshal request: %w", err)
 	}
 
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", "https://openrouter.ai/api/v1/chat/completions", bytes.NewReader(body))
+	resp, err := doWithRetry(ctx, func() (*http.Request, error) {
+		httpReq, err := http.NewRequestWithContext(ctx, "POST", apiURL, bytes.NewReader(body))
+		if err != nil {
+			return nil, fmt.Errorf("create request: %w", err)
+		}
+		httpReq.Header.Set("Content-Type", "application/json")
+		httpReq.Header.Set("Authorization", "Bearer "+apiKey)
+		return httpReq, nil
+	})
 	if err != nil {
-		return nil, fmt.Errorf("create request: %w", err)
-	}
-	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("Authorization", "Bearer "+apiKey)
-
-	resp, err := http.DefaultClient.Do(httpReq)
-	if err != nil {
-		return nil, fmt.Errorf("do request: %w", err)
+		return nil, err
 	}
 	defer resp.Body.Close()
 
@@ -201,17 +248,18 @@ func StreamText(ctx context.Context, model string, messages []ChatMessage, tools
 		return nil, fmt.Errorf("marshal request: %w", err)
 	}
 
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", "https://openrouter.ai/api/v1/chat/completions", bytes.NewReader(body))
+	resp, err := doWithRetry(ctx, func() (*http.Request, error) {
+		httpReq, err := http.NewRequestWithContext(ctx, "POST", apiURL, bytes.NewReader(body))
+		if err != nil {
+			return nil, fmt.Errorf("create request: %w", err)
+		}
+		httpReq.Header.Set("Content-Type", "application/json")
+		httpReq.Header.Set("Authorization", "Bearer "+apiKey)
+		httpReq.Header.Set("Accept", "text/event-stream")
+		return httpReq, nil
+	})
 	if err != nil {
-		return nil, fmt.Errorf("create request: %w", err)
-	}
-	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("Authorization", "Bearer "+apiKey)
-	httpReq.Header.Set("Accept", "text/event-stream")
-
-	resp, err := http.DefaultClient.Do(httpReq)
-	if err != nil {
-		return nil, fmt.Errorf("do request: %w", err)
+		return nil, err
 	}
 	defer resp.Body.Close()
 
@@ -253,7 +301,7 @@ func StreamText(ctx context.Context, model string, messages []ChatMessage, tools
 			}
 
 			for _, tc := range choice.Delta.ToolCalls {
-				idx := 0 // Use index from the tool call if available
+				idx := tc.Index
 				if _, ok := toolAccumulators[idx]; !ok {
 					toolAccumulators[idx] = &ToolCallAccumulator{
 						ID:   tc.ID,

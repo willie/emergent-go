@@ -283,14 +283,23 @@ func (s *SessionState) GetPlayerCharacter() *models.Character {
 
 // GetPlayerLocation returns the player's current location cluster
 func (s *SessionState) GetPlayerLocation() *models.LocationCluster {
-	player := s.GetPlayerCharacter()
-	if player == nil {
-		return nil
-	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+	if s.World == nil {
+		return nil
+	}
+	var playerLocID string
+	for _, c := range s.World.Characters {
+		if c.ID == s.World.PlayerCharacterID {
+			playerLocID = c.CurrentLocationClusterID
+			break
+		}
+	}
+	if playerLocID == "" {
+		return nil
+	}
 	for _, l := range s.World.LocationClusters {
-		if l.ID == player.CurrentLocationClusterID {
+		if l.ID == playerLocID {
 			return &l
 		}
 	}
@@ -299,15 +308,24 @@ func (s *SessionState) GetPlayerLocation() *models.LocationCluster {
 
 // GetCharactersAtPlayerLocation returns discovered non-player characters at the player's location
 func (s *SessionState) GetCharactersAtPlayerLocation() []models.Character {
-	player := s.GetPlayerCharacter()
-	if player == nil {
-		return nil
-	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+	if s.World == nil {
+		return nil
+	}
+	var playerLocID string
+	for _, c := range s.World.Characters {
+		if c.ID == s.World.PlayerCharacterID {
+			playerLocID = c.CurrentLocationClusterID
+			break
+		}
+	}
+	if playerLocID == "" {
+		return nil
+	}
 	var result []models.Character
 	for _, c := range s.World.Characters {
-		if !c.IsPlayer && c.IsDiscovered && c.CurrentLocationClusterID == player.CurrentLocationClusterID {
+		if !c.IsPlayer && c.IsDiscovered && c.CurrentLocationClusterID == playerLocID {
 			result = append(result, c)
 		}
 	}

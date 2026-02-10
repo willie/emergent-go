@@ -1,11 +1,13 @@
 package main
 
 import (
-	"fmt"
-	"log"
+	"context"
 	"log/slog"
 	"net/http"
 	"os"
+	"os/signal"
+	"syscall"
+	"time"
 
 	"emergent/internal/ai"
 	"emergent/internal/handlers"
@@ -21,7 +23,8 @@ func main() {
 	// Create app
 	app, err := handlers.NewApp()
 	if err != nil {
-		log.Fatalf("Failed to initialize app: %v", err)
+		slog.Error("failed to initialize app", "error", err)
+		os.Exit(1)
 	}
 
 	// Routes
@@ -51,6 +54,33 @@ func main() {
 		port = "3000"
 	}
 
-	fmt.Printf("Emergent World server starting on http://localhost:%s\n", port)
-	log.Fatal(http.ListenAndServe(":"+port, handlers.LogRequest(mux)))
+	server := &http.Server{
+		Addr:    ":" + port,
+		Handler: handlers.LogRequest(mux),
+	}
+
+	// Graceful shutdown on SIGINT/SIGTERM
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	go func() {
+		slog.Info("server starting", "addr", "http://localhost:"+port)
+		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			slog.Error("server error", "error", err)
+			os.Exit(1)
+		}
+	}()
+
+	<-ctx.Done()
+	slog.Info("shutting down gracefully")
+
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	if err := server.Shutdown(shutdownCtx); err != nil {
+		slog.Error("shutdown error", "error", err)
+		os.Exit(1)
+	}
+
+	slog.Info("server stopped")
 }
