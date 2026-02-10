@@ -4,8 +4,9 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"html"
 	"html/template"
-	"log"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -18,7 +19,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/yuin/goldmark"
-	"github.com/yuin/goldmark/renderer/html"
+	goldmarkhtml "github.com/yuin/goldmark/renderer/html"
 )
 
 const sessionCookieName = "emergent_session"
@@ -33,7 +34,7 @@ type App struct {
 // NewApp creates a new app with templates compiled at startup
 func NewApp() (*App, error) {
 	md := goldmark.New(
-		goldmark.WithRendererOptions(html.WithHardWraps()),
+		goldmark.WithRendererOptions(goldmarkhtml.WithHardWraps()),
 	)
 
 	funcMap := template.FuncMap{
@@ -114,7 +115,7 @@ func compilePageTemplate(funcMap template.FuncMap, page string) (*template.Templ
 	if err == nil {
 		for _, t := range partials.Templates() {
 			if _, addErr := tmpl.AddParseTree(t.Name(), t.Tree); addErr != nil {
-				log.Printf("Warning: failed to add partial %s: %v", t.Name(), addErr)
+				slog.Warn("failed to add partial", "template", t.Name(), "error", addErr)
 			}
 		}
 	}
@@ -129,13 +130,13 @@ func (a *App) Index(w http.ResponseWriter, r *http.Request) {
 	}
 	session := a.getSession(w, r)
 	if session.World == nil {
-		a.renderScenarioSelector(w, r, session)
+		a.renderScenarioSelector(w, r)
 		return
 	}
 	a.renderGame(w, r, session)
 }
 
-func (a *App) renderScenarioSelector(w http.ResponseWriter, r *http.Request, session *world.SessionState) {
+func (a *App) renderScenarioSelector(w http.ResponseWriter, r *http.Request) {
 	saves, _ := storage.List()
 	type saveDisplay struct {
 		ID          string
@@ -169,7 +170,7 @@ func (a *App) renderScenarioSelector(w http.ResponseWriter, r *http.Request, ses
 
 	w.Header().Set("Content-Type", "text/html")
 	if err := a.PageTemplates["scenario_selector.html"].ExecuteTemplate(w, "layout.html", data); err != nil {
-		log.Printf("Render error: %v", err)
+		slog.Error("render failed", "template", "scenario_selector", "error", err)
 	}
 }
 
@@ -238,7 +239,7 @@ func (a *App) renderGame(w http.ResponseWriter, r *http.Request, session *world.
 
 	w.Header().Set("Content-Type", "text/html")
 	if err := a.PageTemplates["game.html"].ExecuteTemplate(w, "layout.html", data); err != nil {
-		log.Printf("Render error: %v", err)
+		slog.Error("render failed", "template", "game", "error", err)
 	}
 }
 
@@ -314,7 +315,7 @@ func (a *App) LoadGame(w http.ResponseWriter, r *http.Request) {
 
 	session := a.getSession(w, r)
 	if err := session.Load(saveID); err != nil {
-		log.Printf("Failed to load save %s: %v", saveID, err)
+		slog.Error("failed to load save", "save", saveID, "error", err)
 	}
 
 	http.Redirect(w, r, "/", http.StatusSeeOther)
@@ -411,7 +412,7 @@ func (a *App) PartialSaves(w http.ResponseWriter, r *http.Request) {
 				<p class="text-xs text-zinc-500">%s</p>
 			</div>
 		</a>`,
-			s.ID, activeClass, nameClass, name, currentLabel,
+			html.EscapeString(s.ID), activeClass, nameClass, html.EscapeString(name), currentLabel,
 			s.UpdatedAt.Format("Jan 2, 2006 3:04 PM"))
 	}
 }

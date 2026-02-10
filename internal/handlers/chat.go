@@ -6,7 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"html"
-	"log"
+	"log/slog"
 	"net/http"
 	"strings"
 
@@ -150,7 +150,7 @@ func (a *App) streamResponse(w http.ResponseWriter, r *http.Request, session *wo
 
 	// Persist state
 	if err := session.Persist(); err != nil {
-		log.Printf("Failed to persist state: %v", err)
+		slog.Error("failed to persist state", "error", err)
 	}
 
 	writeSSE(w, flusher, "done", "")
@@ -194,7 +194,7 @@ func (a *App) renderOOBUpdates(session *world.SessionState) string {
 func (a *App) renderPartial(name string, data interface{}) string {
 	var buf bytes.Buffer
 	if err := a.PageTemplates["game.html"].ExecuteTemplate(&buf, name, data); err != nil {
-		log.Printf("renderPartial %s error: %v", name, err)
+		slog.Error("render partial failed", "partial", name, "error", err)
 		return ""
 	}
 	return buf.String()
@@ -423,7 +423,7 @@ func (a *App) handleMoveToLocation(ctx context.Context, session *world.SessionSt
 		NarrativeTime *string `json:"narrativeTime"`
 	}
 	if err := json.Unmarshal([]byte(tc.Function.Arguments), &args); err != nil {
-		log.Printf("Failed to parse moveToLocation args: %v", err)
+		slog.Error("failed to parse tool args", "tool", "moveToLocation", "error", err)
 		return
 	}
 
@@ -507,7 +507,7 @@ func (a *App) handleAdvanceTime(session *world.SessionState, tc ai.ToolCall) {
 		Ticks         *int   `json:"ticks"`
 	}
 	if err := json.Unmarshal([]byte(tc.Function.Arguments), &args); err != nil {
-		log.Printf("Failed to parse advanceTime args: %v", err)
+		slog.Error("failed to parse tool args", "tool", "advanceTime", "error", err)
 		return
 	}
 
@@ -525,7 +525,7 @@ func (a *App) handleDiscoverCharacter(session *world.SessionState, tc ai.ToolCal
 		Goals         string `json:"goals"`
 	}
 	if err := json.Unmarshal([]byte(tc.Function.Arguments), &args); err != nil {
-		log.Printf("Failed to parse discoverCharacter args: %v", err)
+		slog.Error("failed to parse tool args", "tool", "discoverCharacter", "error", err)
 		return
 	}
 
