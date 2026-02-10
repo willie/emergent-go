@@ -10,9 +10,12 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"sort"
 	"strings"
 	"time"
 )
+
+var httpClient = &http.Client{Timeout: 120 * time.Second}
 
 const apiURL = "https://openrouter.ai/api/v1/chat/completions"
 
@@ -41,7 +44,8 @@ var AvailableModels = []string{
 func Init() {
 	apiKey = os.Getenv("OPENROUTER_API_KEY")
 	if apiKey == "" {
-		slog.Warn("OPENROUTER_API_KEY not set")
+		slog.Error("OPENROUTER_API_KEY not set")
+		os.Exit(1)
 	}
 }
 
@@ -66,7 +70,7 @@ func doWithRetry(ctx context.Context, buildReq func() (*http.Request, error)) (*
 			return nil, err
 		}
 
-		resp, err := http.DefaultClient.Do(req)
+		resp, err := httpClient.Do(req)
 		if err != nil {
 			lastErr = fmt.Errorf("do request: %w", err)
 			continue
@@ -272,6 +276,7 @@ func StreamText(ctx context.Context, model string, messages []ChatMessage, tools
 	toolAccumulators := make(map[int]*ToolCallAccumulator)
 
 	scanner := bufio.NewScanner(resp.Body)
+	scanner.Buffer(make([]byte, 0, 1<<20), 1<<20)
 	for scanner.Scan() {
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
@@ -324,8 +329,19 @@ func StreamText(ctx context.Context, model string, messages []ChatMessage, tools
 		}
 	}
 
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("scan stream: %w", err)
+	}
+
+	keys := make([]int, 0, len(toolAccumulators))
+	for k := range toolAccumulators {
+		keys = append(keys, k)
+	}
+	sort.Ints(keys)
+
 	var toolCalls []ToolCall
-	for _, acc := range toolAccumulators {
+	for _, k := range keys {
+		acc := toolAccumulators[k]
 		toolCalls = append(toolCalls, ToolCall{
 			ID:   acc.ID,
 			Type: acc.Type,

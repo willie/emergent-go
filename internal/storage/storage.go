@@ -128,13 +128,24 @@ func List() ([]SaveInfo, error) {
 	return saves, nil
 }
 
-// SetJSON stores a Go value as JSON by key
+// SetJSON stores a Go value as JSON by key.
+// It marshals directly to indented JSON and writes the file,
+// avoiding the unmarshal-remarshal round-trip that Set performs.
 func SetJSON(key string, value interface{}) error {
-	data, err := json.Marshal(value)
+	data, err := json.MarshalIndent(value, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshal: %w", err)
 	}
-	return Set(key, json.RawMessage(data))
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	if err := ensureDataDir(); err != nil {
+		return err
+	}
+
+	path := filepath.Join(dataDir, cleanKey(key)+".json")
+	return os.WriteFile(path, data, 0644)
 }
 
 // GetJSON retrieves a JSON value and unmarshals into target

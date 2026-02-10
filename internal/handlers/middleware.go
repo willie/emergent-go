@@ -17,8 +17,8 @@ func (w *statusWriter) WriteHeader(status int) {
 	if !w.wrote {
 		w.status = status
 		w.wrote = true
+		w.ResponseWriter.WriteHeader(status)
 	}
-	w.ResponseWriter.WriteHeader(status)
 }
 
 func (w *statusWriter) Write(b []byte) (int, error) {
@@ -53,7 +53,11 @@ func LogRequest(next http.Handler) http.Handler {
 
 		// Include session ID if present
 		if cookie, err := r.Cookie(sessionCookieName); err == nil {
-			attrs = append(attrs, slog.String("session", cookie.Value[:8]+"..."))
+			cookiePreview := cookie.Value
+			if len(cookiePreview) > 8 {
+				cookiePreview = cookiePreview[:8]
+			}
+			attrs = append(attrs, slog.String("session", cookiePreview+"..."))
 		}
 
 		slog.LogAttrs(r.Context(), slog.LevelInfo, "request", attrs...)

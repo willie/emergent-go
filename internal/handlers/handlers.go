@@ -129,7 +129,7 @@ func (a *App) Index(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	session := a.getSession(w, r)
-	if session.World == nil {
+	if session.GetWorld() == nil {
 		a.renderScenarioSelector(w, r)
 		return
 	}
@@ -201,14 +201,14 @@ func (a *App) buildGameData(session *world.SessionState) gameData {
 	for _, conv := range session.GetOffscreenConversations() {
 		var names []string
 		for _, pid := range conv.ParticipantIDs {
-			c := session.GetCharacterByID(pid)
-			if c != nil {
+			c, ok := session.GetCharacterByID(pid)
+			if ok {
 				names = append(names, c.Name)
 			}
 		}
 		locName := "Unknown"
-		loc := session.GetLocationCluster(conv.LocationClusterID)
-		if loc != nil {
+		loc, ok := session.GetLocationCluster(conv.LocationClusterID)
+		if ok {
 			locName = loc.CanonicalName
 		}
 		offscreenConvs = append(offscreenConvs, offscreenConvDisplay{
@@ -221,16 +221,21 @@ func (a *App) buildGameData(session *world.SessionState) gameData {
 		})
 	}
 
+	var playerLoc *models.LocationCluster
+	if loc, ok := session.GetPlayerLocation(); ok {
+		playerLoc = &loc
+	}
+
 	return gameData{
-		World:                  session.World,
-		Location:               session.GetPlayerLocation(),
+		World:                  session.GetWorld(),
+		Location:               playerLoc,
 		NearbyCharacters:       session.GetCharactersAtPlayerLocation(),
-		ChatMessages:           session.ChatMessages,
+		ChatMessages:           session.GetChatMessagesCopy(),
 		OffscreenConversations: offscreenConvs,
 		DiscoveredCharacters:   session.GetDiscoveredCharacters(),
 		AvailableModels:        ai.AvailableModels,
-		ModelID:                session.ModelID,
-		IsSimulating:           session.IsSimulating,
+		ModelID:                session.GetModelID(),
+		IsSimulating:           session.GetIsSimulating(),
 	}
 }
 
@@ -373,7 +378,7 @@ func (a *App) SetModel(w http.ResponseWriter, r *http.Request) {
 	session := a.getSession(w, r)
 	model := r.FormValue("model")
 	if model != "" {
-		session.ModelID = model
+		session.SetModelID(model)
 	}
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }

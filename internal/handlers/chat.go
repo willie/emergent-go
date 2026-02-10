@@ -45,7 +45,7 @@ func (a *App) ChatSend(w http.ResponseWriter, r *http.Request) {
 	}
 
 	session := a.getSession(w, r)
-	if session.World == nil {
+	if session.GetWorld() == nil {
 		http.Error(w, "No active game", 400)
 		return
 	}
@@ -72,7 +72,7 @@ func (a *App) ChatContinue(w http.ResponseWriter, r *http.Request) {
 	}
 
 	session := a.getSession(w, r)
-	if session.World == nil {
+	if session.GetWorld() == nil {
 		http.Error(w, "No active game", 400)
 		return
 	}
@@ -105,15 +105,17 @@ func (a *App) streamResponse(w http.ResponseWriter, r *http.Request, session *wo
 	}
 
 	// Build AI messages
-	aiMessages := a.buildAIMessages(session)
-	systemPrompt := buildSystemPrompt(session.World)
-	tools := buildChatTools(session.World)
+	chatMessages := session.GetChatMessagesCopy()
+	aiMessages := a.buildAIMessages(chatMessages)
+	ws := session.GetWorld()
+	systemPrompt := buildSystemPrompt(ws)
+	tools := buildChatTools(ws)
 
 	fullMessages := append([]ai.ChatMessage{
 		{Role: "system", Content: systemPrompt},
 	}, aiMessages...)
 
-	model := session.ModelID
+	model := session.GetModelID()
 	if model == "" {
 		model = ai.Models.MainConversation
 	}
@@ -200,9 +202,9 @@ func (a *App) renderPartial(name string, data interface{}) string {
 	return buf.String()
 }
 
-func (a *App) buildAIMessages(session *world.SessionState) []ai.ChatMessage {
+func (a *App) buildAIMessages(chatMessages []models.ChatMessage) []ai.ChatMessage {
 	var messages []ai.ChatMessage
-	for _, msg := range session.ChatMessages {
+	for _, msg := range chatMessages {
 		messages = append(messages, ai.ChatMessage{
 			Role:    msg.Role,
 			Content: msg.Content,
@@ -212,10 +214,10 @@ func (a *App) buildAIMessages(session *world.SessionState) []ai.ChatMessage {
 }
 
 func buildSystemPrompt(ws *models.WorldState) string {
-	player := findPlayer(ws)
+	player, hasPlayer := findPlayer(ws)
 	var playerLocation *models.LocationCluster
 	for _, l := range ws.LocationClusters {
-		if player != nil && l.ID == player.CurrentLocationClusterID {
+		if hasPlayer && l.ID == player.CurrentLocationClusterID {
 			playerLocation = &l
 			break
 		}
@@ -223,7 +225,7 @@ func buildSystemPrompt(ws *models.WorldState) string {
 
 	var presentChars []models.Character
 	for _, c := range ws.Characters {
-		if !c.IsPlayer && c.IsDiscovered && player != nil && c.CurrentLocationClusterID == player.CurrentLocationClusterID {
+		if !c.IsPlayer && c.IsDiscovered && hasPlayer && c.CurrentLocationClusterID == player.CurrentLocationClusterID {
 			presentChars = append(presentChars, c)
 		}
 	}
@@ -257,7 +259,7 @@ func buildSystemPrompt(ws *models.WorldState) string {
 	var undiscoveredHint string
 	var undiscovered []string
 	for _, c := range ws.Characters {
-		if !c.IsPlayer && !c.IsDiscovered && player != nil && c.CurrentLocationClusterID == player.CurrentLocationClusterID {
+		if !c.IsPlayer && !c.IsDiscovered && hasPlayer && c.CurrentLocationClusterID == player.CurrentLocationClusterID {
 			undiscovered = append(undiscovered, c.Name)
 		}
 	}
@@ -267,7 +269,7 @@ func buildSystemPrompt(ws *models.WorldState) string {
 
 	var otherLocations []string
 	for _, loc := range ws.LocationClusters {
-		if player != nil && loc.ID != player.CurrentLocationClusterID {
+		if hasPlayer && loc.ID != player.CurrentLocationClusterID {
 			otherLocations = append(otherLocations, loc.CanonicalName)
 		}
 	}
@@ -427,13 +429,13 @@ func (a *App) handleMoveToLocation(ctx context.Context, session *world.SessionSt
 		return
 	}
 
-	ws := session.World
+	ws := session.GetWorld()
 	if ws == nil {
 		return
 	}
 
-	player := findPlayer(ws)
-	if player == nil {
+	player, ok := findPlayer(ws)
+	if !ok {
 		return
 	}
 	previousLocationID := player.CurrentLocationClusterID
@@ -449,7 +451,8 @@ func (a *App) handleMoveToLocation(ctx context.Context, session *world.SessionSt
 		}{c.ID, c.CanonicalName})
 	}
 
-	resolved, err := world.ResolveLocation(ctx, args.Destination, clusters, session.ModelID)
+	modelID := session.GetModelID()
+	resolved, err := world.ResolveLocation(ctx, args.Destination, clusters, modelID)
 	if err != nil || resolved == nil {
 		name := world.ExtractCanonicalName(args.Destination)
 		resolved = &world.ResolveLocationResult{
@@ -470,10 +473,10 @@ func (a *App) handleMoveToLocation(ctx context.Context, session *world.SessionSt
 	if clusterID != "" {
 		session.MoveCharacter(ws.PlayerCharacterID, clusterID)
 
-		timeSinceLastSim := ws.Time.Tick - session.LastSimulationTick
+		timeSinceLastSim := ws.Time.Tick - session.GetLastSimulationTick()
 		if timeSinceLastSim > 5 && previousLocationID != clusterID {
-			session.IsSimulating = true
-			simResult, err := world.SimulateOffscreen(ctx, ws, clusterID, timeSinceLastSim, session.ModelID)
+			session.SetIsSimulating(true)
+			simResult, err := world.SimulateOffscreen(ctx, ws, clusterID, timeSinceLastSim, modelID)
 			if err == nil && simResult != nil {
 				for _, event := range simResult.Events {
 					event.SourceMessageID = messageID
@@ -489,8 +492,8 @@ func (a *App) handleMoveToLocation(ctx context.Context, session *world.SessionSt
 					session.MoveCharacter(update.CharacterID, update.NewLocationID)
 				}
 			}
-			session.LastSimulationTick = ws.Time.Tick
-			session.IsSimulating = false
+			session.SetLastSimulationTick(ws.Time.Tick)
+			session.SetIsSimulating(false)
 		}
 	}
 
@@ -529,17 +532,19 @@ func (a *App) handleDiscoverCharacter(session *world.SessionState, tc ai.ToolCal
 		return
 	}
 
-	match := session.FindBestCharacterMatch(args.CharacterName)
-	if match != nil {
+	match, found := session.FindBestCharacterMatch(args.CharacterName)
+	if found {
 		session.DiscoverCharacter(match.ID)
 	} else {
-		player := session.GetPlayerCharacter()
+		player, ok := session.GetPlayerCharacter()
 		locationID := ""
-		if player != nil {
+		if ok {
 			locationID = player.CurrentLocationClusterID
 		}
-		if locationID == "" && len(session.World.LocationClusters) > 0 {
-			locationID = session.World.LocationClusters[0].ID
+		if locationID == "" {
+			if ws := session.GetWorld(); ws != nil && len(ws.LocationClusters) > 0 {
+				locationID = ws.LocationClusters[0].ID
+			}
 		}
 
 		session.AddCharacter(models.Character{
@@ -557,11 +562,11 @@ func (a *App) handleDiscoverCharacter(session *world.SessionState, tc ai.ToolCal
 	}
 }
 
-func findPlayer(ws *models.WorldState) *models.Character {
+func findPlayer(ws *models.WorldState) (models.Character, bool) {
 	for _, c := range ws.Characters {
 		if c.ID == ws.PlayerCharacterID {
-			return &c
+			return c, true
 		}
 	}
-	return nil
+	return models.Character{}, false
 }

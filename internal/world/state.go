@@ -266,27 +266,27 @@ func (s *SessionState) UpdateCharacterKnowledge(characterID string, content stri
 	}
 }
 
-// GetPlayerCharacter returns the player character
-func (s *SessionState) GetPlayerCharacter() *models.Character {
+// GetPlayerCharacter returns the player character and true, or a zero value and false.
+func (s *SessionState) GetPlayerCharacter() (models.Character, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	if s.World == nil {
-		return nil
+		return models.Character{}, false
 	}
 	for _, c := range s.World.Characters {
 		if c.ID == s.World.PlayerCharacterID {
-			return &c
+			return c, true
 		}
 	}
-	return nil
+	return models.Character{}, false
 }
 
-// GetPlayerLocation returns the player's current location cluster
-func (s *SessionState) GetPlayerLocation() *models.LocationCluster {
+// GetPlayerLocation returns the player's current location cluster and true, or a zero value and false.
+func (s *SessionState) GetPlayerLocation() (models.LocationCluster, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	if s.World == nil {
-		return nil
+		return models.LocationCluster{}, false
 	}
 	var playerLocID string
 	for _, c := range s.World.Characters {
@@ -296,14 +296,14 @@ func (s *SessionState) GetPlayerLocation() *models.LocationCluster {
 		}
 	}
 	if playerLocID == "" {
-		return nil
+		return models.LocationCluster{}, false
 	}
 	for _, l := range s.World.LocationClusters {
 		if l.ID == playerLocID {
-			return &l
+			return l, true
 		}
 	}
-	return nil
+	return models.LocationCluster{}, false
 }
 
 // GetCharactersAtPlayerLocation returns discovered non-player characters at the player's location
@@ -364,65 +364,66 @@ func (s *SessionState) GetOffscreenConversations() []models.Conversation {
 	return result
 }
 
-// GetCharacterByID returns a character by ID
-func (s *SessionState) GetCharacterByID(id string) *models.Character {
+// GetCharacterByID returns a character by ID and true, or a zero value and false.
+func (s *SessionState) GetCharacterByID(id string) (models.Character, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	if s.World == nil {
-		return nil
+		return models.Character{}, false
 	}
 	for _, c := range s.World.Characters {
 		if c.ID == id {
-			return &c
+			return c, true
 		}
 	}
-	return nil
+	return models.Character{}, false
 }
 
-// GetLocationCluster returns a location cluster by ID
-func (s *SessionState) GetLocationCluster(id string) *models.LocationCluster {
+// GetLocationCluster returns a location cluster by ID and true, or a zero value and false.
+func (s *SessionState) GetLocationCluster(id string) (models.LocationCluster, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	if s.World == nil {
-		return nil
+		return models.LocationCluster{}, false
 	}
 	for _, l := range s.World.LocationClusters {
 		if l.ID == id {
-			return &l
+			return l, true
 		}
 	}
-	return nil
+	return models.LocationCluster{}, false
 }
 
-// FindBestCharacterMatch finds a character by name with fuzzy matching
-func (s *SessionState) FindBestCharacterMatch(name string) *models.Character {
+// FindBestCharacterMatch finds a character by name with fuzzy matching.
+// Returns the character and true, or a zero value and false.
+func (s *SessionState) FindBestCharacterMatch(name string) (models.Character, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	if s.World == nil {
-		return nil
+		return models.Character{}, false
 	}
 	normalizedSearch := normalizeName(name)
 
 	// Exact match
 	for _, c := range s.World.Characters {
 		if strings.EqualFold(c.Name, name) {
-			return &c
+			return c, true
 		}
 	}
 	// Normalized exact
 	for _, c := range s.World.Characters {
 		if normalizeName(c.Name) == normalizedSearch {
-			return &c
+			return c, true
 		}
 	}
 	// Substring match
 	for _, c := range s.World.Characters {
 		normChar := normalizeName(c.Name)
 		if strings.Contains(normChar, normalizedSearch) || strings.Contains(normalizedSearch, normChar) {
-			return &c
+			return c, true
 		}
 	}
-	return nil
+	return models.Character{}, false
 }
 
 func normalizeName(name string) string {
@@ -503,6 +504,64 @@ func (s *SessionState) AddChatMessage(msg models.ChatMessage) {
 		msg.ID = uuid.New().String()
 	}
 	s.ChatMessages = append(s.ChatMessages, msg)
+}
+
+// GetWorld returns the world state pointer under a read lock.
+func (s *SessionState) GetWorld() *models.WorldState {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.World
+}
+
+// GetModelID returns the current model ID under a read lock.
+func (s *SessionState) GetModelID() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.ModelID
+}
+
+// SetModelID sets the model ID under a write lock.
+func (s *SessionState) SetModelID(id string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.ModelID = id
+}
+
+// GetIsSimulating returns the simulation flag under a read lock.
+func (s *SessionState) GetIsSimulating() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.IsSimulating
+}
+
+// SetIsSimulating sets the simulation flag under a write lock.
+func (s *SessionState) SetIsSimulating(v bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.IsSimulating = v
+}
+
+// GetLastSimulationTick returns the last simulation tick under a read lock.
+func (s *SessionState) GetLastSimulationTick() int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.LastSimulationTick
+}
+
+// SetLastSimulationTick sets the last simulation tick under a write lock.
+func (s *SessionState) SetLastSimulationTick(tick int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.LastSimulationTick = tick
+}
+
+// GetChatMessagesCopy returns a defensive copy of the chat messages slice.
+func (s *SessionState) GetChatMessagesCopy() []models.ChatMessage {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	cp := make([]models.ChatMessage, len(s.ChatMessages))
+	copy(cp, s.ChatMessages)
+	return cp
 }
 
 // UpdateCharacter updates character fields
