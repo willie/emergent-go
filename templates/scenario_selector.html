@@ -81,16 +81,19 @@
                 {{if .Saves}}
                 <div class="space-y-2">
                     {{range .Saves}}
-                    <a href="/game/load?save={{.ID}}"
-                        class="group flex items-center justify-between p-4 rounded-lg border border-zinc-700 bg-zinc-800/30 hover:bg-zinc-800 cursor-pointer transition-all">
-                        <div>
-                            <h3 class="font-medium text-zinc-200 group-hover:text-blue-400">{{.DisplayName}}</h3>
-                            <p class="text-xs text-zinc-500 mt-1">Last played: {{.UpdatedAt}}</p>
-                        </div>
-                        <svg class="text-zinc-600 group-hover:text-blue-500" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                            <path d="M5 12h14"/><path d="m12 5 7 7-7 7"/>
-                        </svg>
-                    </a>
+                    <form method="POST" action="/game/load">
+                        <input type="hidden" name="save" value="{{.ID}}">
+                        <button type="submit"
+                            class="w-full group flex items-center justify-between p-4 rounded-lg border border-zinc-700 bg-zinc-800/30 hover:bg-zinc-800 cursor-pointer transition-all text-left">
+                            <div>
+                                <h3 class="font-medium text-zinc-200 group-hover:text-blue-400">{{.DisplayName}}</h3>
+                                <p class="text-xs text-zinc-500 mt-1">Last played: {{.UpdatedAt}}</p>
+                            </div>
+                            <svg class="text-zinc-600 group-hover:text-blue-500" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <path d="M5 12h14"/><path d="m12 5 7 7-7 7"/>
+                            </svg>
+                        </button>
+                    </form>
                     {{end}}
                 </div>
                 {{else}}

@@ -520,8 +520,10 @@ func (s *SessionState) AddChatMessage(msg models.ChatMessage) {
 	s.ChatMessages = append(s.ChatMessages, msg)
 }
 
-// GetWorld returns the world state pointer. Caller must hold the session mutex.
+// GetWorld returns the world state pointer.
 func (s *SessionState) GetWorld() *models.WorldState {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	return s.World
 }
 

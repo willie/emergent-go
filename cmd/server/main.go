@@ -35,7 +35,7 @@ func main() {
 	mux.HandleFunc("GET /{$}", app.Index)
 	mux.HandleFunc("POST /game/new", app.NewGame)
 	mux.HandleFunc("POST /game/new-custom", app.NewCustomGame)
-	mux.HandleFunc("GET /game/load", app.LoadGame)
+	mux.HandleFunc("POST /game/load", app.LoadGame)
 	mux.HandleFunc("POST /game/exit", app.ExitGame)
 	mux.HandleFunc("POST /scenario/import", app.ImportScenario)
 	mux.HandleFunc("POST /settings/model", app.SetModel)

@@ -255,6 +255,18 @@
 {{end}}
 {{end}}
 
+{{define "save_item"}}
+<form method="POST" action="/game/load">
+    <input type="hidden" name="save" value="{{.ID}}">
+    <button type="submit" class="w-full group flex items-center justify-between p-3 rounded-lg border cursor-pointer transition-all text-left {{if .IsActive}}bg-blue-900/20 border-blue-500/50{{else}}bg-zinc-800/50 border-zinc-700 hover:bg-zinc-800{{end}}">
+        <div class="min-w-0">
+            <p class="text-sm font-medium truncate {{if .IsActive}}text-blue-400{{else}}text-zinc-200{{end}}">{{.DisplayName}}{{if .IsActive}} <span class="ml-2 text-xs text-blue-500/80">(Current)</span>{{end}}</p>
+            <p class="text-xs text-zinc-500">{{.UpdatedAt}}</p>
+        </div>
+    </button>
+</form>
+{{end}}
+
 {{define "character_list"}}
 {{$chars := .DiscoveredCharacters}}
 {{if not $chars}}

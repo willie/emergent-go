@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"html"
 	"html/template"
 	"io/fs"
 	"log/slog"
@@ -149,6 +148,11 @@ func compilePageTemplate(templateFS fs.FS, funcMap template.FuncMap, page string
 
 // Index serves the main page
 func (a *App) Index(w http.ResponseWriter, r *http.Request) {
+	if sid := a.getSessionID(r); sid != "" {
+		mu := a.getSessionMutex(sid)
+		mu.Lock()
+		defer mu.Unlock()
+	}
 	session := a.getSession(w, r)
 	if session.GetWorld() == nil {
 		a.renderScenarioSelector(w, r)
@@ -361,7 +365,7 @@ func (a *App) LoadGame(w http.ResponseWriter, r *http.Request) {
 		mu.Lock()
 		defer mu.Unlock()
 	}
-	saveID := r.URL.Query().Get("save")
+	saveID := r.FormValue("save")
 	if saveID == "" {
 		http.Redirect(w, r, "/", http.StatusSeeOther)
 		return
@@ -453,10 +457,16 @@ func (a *App) SetModel(w http.ResponseWriter, r *http.Request) {
 
 // PartialSaves returns the saves list as HTML partial
 func (a *App) PartialSaves(w http.ResponseWriter, r *http.Request) {
+	if sid := a.getSessionID(r); sid != "" {
+		mu := a.getSessionMutex(sid)
+		mu.Lock()
+		defer mu.Unlock()
+	}
 	session := a.getSession(w, r)
 	saves, _ := storage.List()
 	w.Header().Set("Content-Type", "text/html")
 
+	activeSaveKey := session.GetActiveSaveKey()
 	for _, s := range saves {
 		if !strings.HasPrefix(s.ID, "surat-world-storage") {
 			continue
@@ -465,28 +475,15 @@ func (a *App) PartialSaves(w http.ResponseWriter, r *http.Request) {
 		if s.ID != "surat-world-storage" {
 			name = strings.ReplaceAll(strings.TrimPrefix(s.ID, "surat-world-storage-"), "-", " ")
 		}
-		isActive := s.ID == session.GetActiveSaveKey()
-
-		activeClass := "bg-zinc-800/50 border-zinc-700 hover:bg-zinc-800"
-		nameClass := "text-zinc-200"
-		if isActive {
-			activeClass = "bg-blue-900/20 border-blue-500/50"
-			nameClass = "text-blue-400"
+		data := map[string]any{
+			"ID":          s.ID,
+			"DisplayName": name,
+			"UpdatedAt":   s.UpdatedAt.Format("Jan 2, 2006 3:04 PM"),
+			"IsActive":    s.ID == activeSaveKey,
 		}
-
-		currentLabel := ""
-		if isActive {
-			currentLabel = ` <span class="ml-2 text-xs text-blue-500/80">(Current)</span>`
+		if err := a.PageTemplates["game.html"].ExecuteTemplate(w, "save_item", data); err != nil {
+			slog.Error("render save_item failed", "error", err)
 		}
-
-		fmt.Fprintf(w, `<a href="/game/load?save=%s" class="group flex items-center justify-between p-3 rounded-lg border cursor-pointer transition-all %s">
-			<div class="min-w-0">
-				<p class="text-sm font-medium truncate %s">%s%s</p>
-				<p class="text-xs text-zinc-500">%s</p>
-			</div>
-		</a>`,
-			html.EscapeString(s.ID), activeClass, nameClass, html.EscapeString(name), currentLabel,
-			s.UpdatedAt.Format("Jan 2, 2006 3:04 PM"))
 	}
 }
 

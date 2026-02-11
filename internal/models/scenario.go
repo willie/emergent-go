@@ -59,6 +59,16 @@ func (s *ScenarioConfig) Validate() error {
 	if len(s.Characters) == 0 {
 		return fmt.Errorf("at least one character is required")
 	}
+	hasPlayer := false
+	for _, c := range s.Characters {
+		if c.IsPlayer {
+			hasPlayer = true
+			break
+		}
+	}
+	if !hasPlayer {
+		return fmt.Errorf("at least one character must be a player")
+	}
 	if s.PlayerStartingLocation == "" {
 		return fmt.Errorf("player starting location is required")
 	}

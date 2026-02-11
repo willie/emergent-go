@@ -10,7 +10,8 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
-	"sort"
+	"maps"
+	"slices"
 	"strings"
 	"time"
 )
@@ -334,14 +335,8 @@ func StreamText(ctx context.Context, model string, messages []ChatMessage, tools
 		return nil, fmt.Errorf("scan stream: %w", err)
 	}
 
-	keys := make([]int, 0, len(toolAccumulators))
-	for k := range toolAccumulators {
-		keys = append(keys, k)
-	}
-	sort.Ints(keys)
-
 	var toolCalls []ToolCall
-	for _, k := range keys {
+	for _, k := range slices.Sorted(maps.Keys(toolAccumulators)) {
 		acc := toolAccumulators[k]
 		toolCalls = append(toolCalls, ToolCall{
 			ID:   acc.ID,

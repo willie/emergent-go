@@ -154,91 +154,98 @@
                 let pending = '';
                 let streamStarted = false;
 
+                let _currentEvent = '';
+                let _dataLines = [];
+
+                function dispatchSSEEvent(event, data) {
+                    if (event === 'user-message') {
+                        const div = document.createElement('div');
+                        div.innerHTML = data;
+                        while (div.firstChild) messages.appendChild(div.firstChild);
+                        scrollChat();
+                    } else if (event === 'token') {
+                        if (!streamStarted) {
+                            messages.appendChild(assistantDiv);
+                            streamStarted = true;
+                        }
+                        const target = document.getElementById('stream-content');
+                        if (target) target.textContent += data;
+                        scrollChat();
+                    } else if (event === 'error') {
+                        if (!streamStarted) {
+                            messages.appendChild(assistantDiv);
+                            streamStarted = true;
+                        }
+                        const target = document.getElementById('stream-content');
+                        if (target) {
+                            const errSpan = document.createElement('span');
+                            errSpan.className = 'text-red-400';
+                            errSpan.textContent = 'Error: ' + data;
+                            target.appendChild(errSpan);
+                        }
+                    } else if (event === 'oob') {
+                        const temp = document.createElement('div');
+                        temp.innerHTML = data;
+                        temp.querySelectorAll('[hx-swap-oob]').forEach(el => {
+                            const targetId = el.id;
+                            const target = document.getElementById(targetId);
+                            if (target) {
+                                target.innerHTML = el.innerHTML;
+                            }
+                        });
+                    } else if (event === 'simulating') {
+                        let indicator = document.getElementById('simulating-indicator');
+                        if (!indicator) {
+                            indicator = document.createElement('div');
+                            indicator.id = 'simulating-indicator';
+                            indicator.className = 'flex justify-start';
+                            indicator.innerHTML = '<div class="bg-zinc-800/50 text-zinc-400 rounded-lg px-4 py-2 text-sm"><span class="animate-pulse">Simulating world\u2026</span></div>';
+                            messages.appendChild(indicator);
+                            scrollChat();
+                        }
+                    } else if (event === 'simulated') {
+                        const indicator = document.getElementById('simulating-indicator');
+                        if (indicator) indicator.remove();
+                    } else if (event === 'done') {
+                        clearTimeout(timeoutId);
+                        const target = document.getElementById('stream-content');
+                        if (target) {
+                            const raw = target.textContent;
+                            if (typeof marked !== 'undefined' && raw) {
+                                target.classList.remove('whitespace-pre-wrap');
+                                target.innerHTML = marked.parse(raw);
+                            }
+                            target.removeAttribute('id');
+                        }
+                        setChatBusy(false);
+                        scrollChat();
+                    }
+                }
+
                 function processLine(line) {
                     if (line.startsWith('event: ')) {
-                        processLine._currentEvent = line.slice(7).trim();
+                        _currentEvent = line.slice(7).trim();
                         return;
                     }
                     if (line.startsWith('data: ')) {
-                        const data = line.slice(6);
-                        const event = processLine._currentEvent || '';
-
-                        if (event === 'user-message') {
-                            // Append user message bubble
-                            const div = document.createElement('div');
-                            div.innerHTML = data;
-                            while (div.firstChild) messages.appendChild(div.firstChild);
-                            scrollChat();
-                        } else if (event === 'token') {
-                            if (!streamStarted) {
-                                messages.appendChild(assistantDiv);
-                                streamStarted = true;
-                            }
-                            const target = document.getElementById('stream-content');
-                            if (target) target.textContent += data;
-                            scrollChat();
-                        } else if (event === 'error') {
-                            if (!streamStarted) {
-                                messages.appendChild(assistantDiv);
-                                streamStarted = true;
-                            }
-                            const target = document.getElementById('stream-content');
-                            if (target) {
-                                const errSpan = document.createElement('span');
-                                errSpan.className = 'text-red-400';
-                                errSpan.textContent = 'Error: ' + data;
-                                target.appendChild(errSpan);
-                            }
-                        } else if (event === 'oob') {
-                            // Process out-of-band swaps
-                            const temp = document.createElement('div');
-                            temp.innerHTML = data;
-                            temp.querySelectorAll('[hx-swap-oob]').forEach(el => {
-                                const targetId = el.id;
-                                const target = document.getElementById(targetId);
-                                if (target) {
-                                    target.innerHTML = el.innerHTML;
-                                }
-                            });
-                        } else if (event === 'simulating') {
-                            let indicator = document.getElementById('simulating-indicator');
-                            if (!indicator) {
-                                indicator = document.createElement('div');
-                                indicator.id = 'simulating-indicator';
-                                indicator.className = 'flex justify-start';
-                                indicator.innerHTML = '<div class="bg-zinc-800/50 text-zinc-400 rounded-lg px-4 py-2 text-sm"><span class="animate-pulse">Simulating world\u2026</span></div>';
-                                messages.appendChild(indicator);
-                                scrollChat();
-                            }
-                        } else if (event === 'simulated') {
-                            const indicator = document.getElementById('simulating-indicator');
-                            if (indicator) indicator.remove();
-                        } else if (event === 'done') {
-                            clearTimeout(timeoutId);
-                            // Render accumulated text as markdown, then remove temp id
-                            const target = document.getElementById('stream-content');
-                            if (target) {
-                                const raw = target.textContent;
-                                if (typeof marked !== 'undefined' && raw) {
-                                    target.classList.remove('whitespace-pre-wrap');
-                                    target.innerHTML = marked.parse(raw);
-                                }
-                                target.removeAttribute('id');
-                            }
-                            setChatBusy(false);
-                            scrollChat();
-                        }
-
-                        processLine._currentEvent = '';
+                        _dataLines.push(line.slice(6));
+                        return;
+                    }
+                    // Blank line = end of SSE event, dispatch buffered data
+                    if (line === '' && _dataLines.length > 0) {
+                        dispatchSSEEvent(_currentEvent, _dataLines.join('\n'));
+                        _currentEvent = '';
+                        _dataLines = [];
                     }
                 }
-                processLine._currentEvent = '';
 
                 function pump() {
                     return reader.read().then(({ done, value }) => {
                         if (done) {
                             clearTimeout(timeoutId);
                             if (pending.trim()) processLine(pending);
+                            // Flush any buffered SSE event
+                            processLine('');
                             setChatBusy(false);
                             return;
                         }
@@ -246,7 +253,7 @@
                         const lines = (pending + text).split('\n');
                         pending = lines.pop();
                         for (const line of lines) {
-                            if (line.trim()) processLine(line);
+                            processLine(line);
                         }
                         return pump();
                     });

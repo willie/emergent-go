@@ -6,7 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"sort"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -121,8 +121,8 @@ func List() ([]SaveInfo, error) {
 		})
 	}
 
-	sort.Slice(saves, func(i, j int) bool {
-		return saves[i].UpdatedAt.After(saves[j].UpdatedAt)
+	slices.SortFunc(saves, func(a, b SaveInfo) int {
+		return b.UpdatedAt.Compare(a.UpdatedAt)
 	})
 
 	return saves, nil
