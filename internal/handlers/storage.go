@@ -62,7 +62,8 @@ func (a *App) storageGet(w http.ResponseWriter, r *http.Request) {
 
 	data, err := storage.Get(key)
 	if err != nil {
-		json.NewEncoder(w).Encode(nil)
+		w.WriteHeader(500)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Failed to read data"})
 		return
 	}
 	if data == nil {

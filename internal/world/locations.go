@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"emergent/internal/ai"
+	"emergent/internal/models"
 )
 
 // ResolveLocationResult from resolving a location description
@@ -18,10 +19,7 @@ type ResolveLocationResult struct {
 }
 
 // ResolveLocation resolves a location description to an existing cluster or new one
-func ResolveLocation(ctx context.Context, description string, existingClusters []struct {
-	ID            string `json:"id"`
-	CanonicalName string `json:"canonicalName"`
-}, modelID string) (*ResolveLocationResult, error) {
+func ResolveLocation(ctx context.Context, description string, existingClusters []models.LocationCluster, modelID string) (*ResolveLocationResult, error) {
 	if len(existingClusters) == 0 {
 		name := ExtractCanonicalName(description)
 		return &ResolveLocationResult{

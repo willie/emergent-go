@@ -37,10 +37,6 @@ func writeSSE(w http.ResponseWriter, flusher http.Flusher, event, data string) {
 
 // ChatSend handles a new chat message, returning an SSE stream
 func (a *App) ChatSend(w http.ResponseWriter, r *http.Request) {
-	if r.Method != "POST" {
-		http.Error(w, "Method not allowed", 405)
-		return
-	}
 	if sid := a.getSessionID(r); sid != "" {
 		mu := a.getSessionMutex(sid)
 		mu.Lock()
@@ -79,10 +75,6 @@ func (a *App) ChatSend(w http.ResponseWriter, r *http.Request) {
 
 // ChatContinue generates another assistant response
 func (a *App) ChatContinue(w http.ResponseWriter, r *http.Request) {
-	if r.Method != "POST" {
-		http.Error(w, "Method not allowed", 405)
-		return
-	}
 	if sid := a.getSessionID(r); sid != "" {
 		mu := a.getSessionMutex(sid)
 		mu.Lock()
@@ -161,14 +153,19 @@ func (a *App) streamResponse(w http.ResponseWriter, r *http.Request, session *wo
 		}
 
 		// Append assistant message with tool calls to conversation
+		var content any = result.Content
+		if result.Content == "" {
+			content = nil // API expects null content for tool-call-only messages
+		}
 		fullMessages = append(fullMessages, ai.ChatMessage{
 			Role:      "assistant",
-			Content:   result.Content,
+			Content:   content,
 			ToolCalls: result.ToolCalls,
 		})
 
 		// Process tool calls and get results
-		results := a.processToolCalls(ctx, session, result.ToolCalls, "")
+		notify := func(event, data string) { writeSSE(w, flusher, event, data) }
+		results := a.processToolCalls(ctx, session, result.ToolCalls, "", notify)
 
 		// Append tool result messages
 		for _, tr := range results {
@@ -468,13 +465,13 @@ func buildChatTools(ws *models.WorldState) []ai.Tool {
 	}
 }
 
-func (a *App) processToolCalls(ctx context.Context, session *world.SessionState, toolCalls []ai.ToolCall, messageID string) []toolCallResult {
+func (a *App) processToolCalls(ctx context.Context, session *world.SessionState, toolCalls []ai.ToolCall, messageID string, notify func(event, data string)) []toolCallResult {
 	var results []toolCallResult
 	for _, tc := range toolCalls {
 		var result string
 		switch tc.Function.Name {
 		case "moveToLocation":
-			r, err := a.handleMoveToLocation(ctx, session, tc, messageID)
+			r, err := a.handleMoveToLocation(ctx, session, tc, messageID, notify)
 			if err != nil {
 				slog.Error("moveToLocation failed", "error", err)
 				r = "Failed to move."
@@ -492,7 +489,7 @@ func (a *App) processToolCalls(ctx context.Context, session *world.SessionState,
 	return results
 }
 
-func (a *App) handleMoveToLocation(ctx context.Context, session *world.SessionState, tc ai.ToolCall, messageID string) (string, error) {
+func (a *App) handleMoveToLocation(ctx context.Context, session *world.SessionState, tc ai.ToolCall, messageID string, notify func(event, data string)) (string, error) {
 	var args struct {
 		Destination   string  `json:"destination"`
 		NarrativeTime *string `json:"narrativeTime"`
@@ -512,19 +509,8 @@ func (a *App) handleMoveToLocation(ctx context.Context, session *world.SessionSt
 	}
 	previousLocationID := player.CurrentLocationClusterID
 
-	var clusters []struct {
-		ID            string `json:"id"`
-		CanonicalName string `json:"canonicalName"`
-	}
-	for _, c := range ws.LocationClusters {
-		clusters = append(clusters, struct {
-			ID            string `json:"id"`
-			CanonicalName string `json:"canonicalName"`
-		}{c.ID, c.CanonicalName})
-	}
-
 	modelID := session.GetModelID()
-	resolved, err := world.ResolveLocation(ctx, args.Destination, clusters, modelID)
+	resolved, err := world.ResolveLocation(ctx, args.Destination, ws.LocationClusters, modelID)
 	if err != nil || resolved == nil {
 		name := world.ExtractCanonicalName(args.Destination)
 		resolved = &world.ResolveLocationResult{
@@ -548,6 +534,9 @@ func (a *App) handleMoveToLocation(ctx context.Context, session *world.SessionSt
 		timeSinceLastSim := ws.Time.Tick - session.GetLastSimulationTick()
 		if timeSinceLastSim > 5 && previousLocationID != clusterID {
 			session.SetIsSimulating(true)
+			if notify != nil {
+				notify("simulating", "Simulating the world...")
+			}
 			simResult, err := world.SimulateOffscreen(ctx, ws, clusterID, timeSinceLastSim, modelID)
 			if err == nil && simResult != nil {
 				for _, event := range simResult.Events {
@@ -566,6 +555,9 @@ func (a *App) handleMoveToLocation(ctx context.Context, session *world.SessionSt
 			}
 			session.SetLastSimulationTick(ws.Time.Tick)
 			session.SetIsSimulating(false)
+			if notify != nil {
+				notify("simulated", "")
+			}
 		}
 	}
 

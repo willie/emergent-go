@@ -31,20 +31,20 @@ func main() {
 	mux := http.NewServeMux()
 
 	// Pages
-	mux.HandleFunc("/", app.Index)
-	mux.HandleFunc("/game/new", app.NewGame)
-	mux.HandleFunc("/game/new-custom", app.NewCustomGame)
-	mux.HandleFunc("/game/load", app.LoadGame)
+	mux.HandleFunc("GET /{$}", app.Index)
+	mux.HandleFunc("POST /game/new", app.NewGame)
+	mux.HandleFunc("POST /game/new-custom", app.NewCustomGame)
+	mux.HandleFunc("GET /game/load", app.LoadGame)
 	mux.HandleFunc("/game/exit", app.ExitGame)
-	mux.HandleFunc("/scenario/import", app.ImportScenario)
-	mux.HandleFunc("/settings/model", app.SetModel)
+	mux.HandleFunc("POST /scenario/import", app.ImportScenario)
+	mux.HandleFunc("POST /settings/model", app.SetModel)
 
 	// HTMX partials
-	mux.HandleFunc("/partials/saves", app.PartialSaves)
+	mux.HandleFunc("GET /partials/saves", app.PartialSaves)
 
 	// API - Chat (returns streamed HTML)
-	mux.HandleFunc("/api/chat", app.ChatSend)
-	mux.HandleFunc("/api/chat/continue", app.ChatContinue)
+	mux.HandleFunc("POST /api/chat", app.ChatSend)
+	mux.HandleFunc("POST /api/chat/continue", app.ChatContinue)
 
 	// Storage API (JSON, for compatibility)
 	mux.HandleFunc("/api/storage", app.StorageHandler)

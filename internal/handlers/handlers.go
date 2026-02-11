@@ -147,10 +147,6 @@ func compilePageTemplate(funcMap template.FuncMap, page string) (*template.Templ
 
 // Index serves the main page
 func (a *App) Index(w http.ResponseWriter, r *http.Request) {
-	if r.URL.Path != "/" {
-		http.NotFound(w, r)
-		return
-	}
 	session := a.getSession(w, r)
 	if session.GetWorld() == nil {
 		a.renderScenarioSelector(w, r)
@@ -288,10 +284,6 @@ func (a *App) renderGame(w http.ResponseWriter, r *http.Request, session *world.
 
 // NewGame starts a new game with a built-in scenario
 func (a *App) NewGame(w http.ResponseWriter, r *http.Request) {
-	if r.Method != "POST" {
-		http.Redirect(w, r, "/", http.StatusSeeOther)
-		return
-	}
 	if sid := a.getSessionID(r); sid != "" {
 		mu := a.getSessionMutex(sid)
 		mu.Lock()
@@ -323,10 +315,6 @@ func (a *App) NewGame(w http.ResponseWriter, r *http.Request) {
 
 // NewCustomGame starts a game with a custom scenario
 func (a *App) NewCustomGame(w http.ResponseWriter, r *http.Request) {
-	if r.Method != "POST" {
-		http.Redirect(w, r, "/", http.StatusSeeOther)
-		return
-	}
 	if sid := a.getSessionID(r); sid != "" {
 		mu := a.getSessionMutex(sid)
 		mu.Lock()
@@ -400,11 +388,6 @@ func (a *App) ExitGame(w http.ResponseWriter, r *http.Request) {
 
 // ImportScenario handles scenario JSON import
 func (a *App) ImportScenario(w http.ResponseWriter, r *http.Request) {
-	if r.Method != "POST" {
-		http.Redirect(w, r, "/", http.StatusSeeOther)
-		return
-	}
-
 	if err := r.ParseMultipartForm(10 << 20); err != nil {
 		http.Error(w, "Bad request", 400)
 		return
@@ -443,10 +426,6 @@ func (a *App) ImportScenario(w http.ResponseWriter, r *http.Request) {
 
 // SetModel updates the AI model
 func (a *App) SetModel(w http.ResponseWriter, r *http.Request) {
-	if r.Method != "POST" {
-		http.Redirect(w, r, "/", http.StatusSeeOther)
-		return
-	}
 	if sid := a.getSessionID(r); sid != "" {
 		mu := a.getSessionMutex(sid)
 		mu.Lock()
