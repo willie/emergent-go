@@ -168,7 +168,7 @@ func (a *App) renderScenarioSelector(w http.ResponseWriter, r *http.Request) {
 	var customScenarios []models.ScenarioConfig
 	_ = storage.GetJSON("custom_scenarios", &customScenarios)
 
-	data := map[string]interface{}{
+	data := map[string]any{
 		"Scenarios":       world.BuiltinScenarios,
 		"CustomScenarios": customScenarios,
 		"Saves":           displaySaves,

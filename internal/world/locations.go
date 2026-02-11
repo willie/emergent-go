@@ -42,18 +42,18 @@ func ResolveLocation(ctx context.Context, description string, existingClusters [
 			Function: ai.ToolFunction{
 				Name:        "resolveLocation",
 				Description: "Match a location description to an existing location or indicate it is new",
-				Parameters: map[string]interface{}{
+				Parameters: map[string]any{
 					"type": "object",
-					"properties": map[string]interface{}{
-						"matchedClusterId": map[string]interface{}{
+					"properties": map[string]any{
+						"matchedClusterId": map[string]any{
 							"type":        []string{"string", "null"},
 							"description": "The id of the matched cluster, or null if no match",
 						},
-						"canonicalName": map[string]interface{}{
+						"canonicalName": map[string]any{
 							"type":        "string",
 							"description": "The canonical name for this location",
 						},
-						"confidence": map[string]interface{}{
+						"confidence": map[string]any{
 							"type":        "number",
 							"description": "Confidence in the match (0-1)",
 						},

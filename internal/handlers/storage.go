@@ -31,7 +31,7 @@ func (a *App) storageGet(w http.ResponseWriter, r *http.Request) {
 	if list != "" {
 		saves, err := storage.List()
 		if err != nil {
-			json.NewEncoder(w).Encode([]interface{}{})
+			json.NewEncoder(w).Encode([]any{})
 			return
 		}
 		json.NewEncoder(w).Encode(saves)

@@ -93,9 +93,9 @@ func doWithRetry(ctx context.Context, client *http.Client, buildReq func() (*htt
 
 // ToolFunction defines a tool the model can call
 type ToolFunction struct {
-	Name        string      `json:"name"`
-	Description string      `json:"description"`
-	Parameters  interface{} `json:"parameters"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Parameters  any    `json:"parameters"`
 }
 
 // Tool for the OpenRouter API
@@ -106,11 +106,11 @@ type Tool struct {
 
 // ChatMessage for the API
 type ChatMessage struct {
-	Role       string      `json:"role"`
-	Content    interface{} `json:"content"` // string or null for tool_calls
-	ToolCalls  []ToolCall  `json:"tool_calls,omitempty"`
-	ToolCallID string      `json:"tool_call_id,omitempty"`
-	Name       string      `json:"name,omitempty"`
+	Role       string     `json:"role"`
+	Content    any        `json:"content"` // string or null for tool_calls
+	ToolCalls  []ToolCall `json:"tool_calls,omitempty"`
+	ToolCallID string     `json:"tool_call_id,omitempty"`
+	Name       string     `json:"name,omitempty"`
 }
 
 // ToolCall from the model
@@ -132,7 +132,7 @@ type ChatRequest struct {
 	Model      string        `json:"model"`
 	Messages   []ChatMessage `json:"messages"`
 	Tools      []Tool        `json:"tools,omitempty"`
-	ToolChoice interface{}   `json:"tool_choice,omitempty"`
+	ToolChoice any           `json:"tool_choice,omitempty"`
 	Stream     bool          `json:"stream"`
 }
 
@@ -169,7 +169,7 @@ type StreamEvent struct {
 }
 
 // GenerateText makes a non-streaming chat completion
-func GenerateText(ctx context.Context, model string, messages []ChatMessage, tools []Tool, toolChoice interface{}) (*ChatResponse, error) {
+func GenerateText(ctx context.Context, model string, messages []ChatMessage, tools []Tool, toolChoice any) (*ChatResponse, error) {
 	if model == "" {
 		model = Models.Fast
 	}
@@ -223,10 +223,10 @@ type StreamCallback func(content string)
 
 // ToolCallAccumulator collects streaming tool call fragments
 type ToolCallAccumulator struct {
-	ID       string
-	Type     string
-	Name     string
-	ArgsBuf  strings.Builder
+	ID      string
+	Type    string
+	Name    string
+	ArgsBuf strings.Builder
 }
 
 // StreamResult contains the final result of a streaming request

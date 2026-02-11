@@ -23,7 +23,7 @@ func writeSSE(w http.ResponseWriter, flusher http.Flusher, event, data string) {
 		fmt.Fprintf(w, "event: %s\n", event)
 	}
 	// SSE data lines: split on newlines so each gets "data: " prefix
-	for _, line := range strings.Split(data, "\n") {
+	for line := range strings.SplitSeq(data, "\n") {
 		fmt.Fprintf(w, "data: %s\n", line)
 	}
 	fmt.Fprint(w, "\n")
@@ -198,7 +198,7 @@ func singleLineHTML(s string) string {
 }
 
 // renderPartial executes a named template block into a string
-func (a *App) renderPartial(name string, data interface{}) string {
+func (a *App) renderPartial(name string, data any) string {
 	var buf bytes.Buffer
 	if err := a.PageTemplates["game.html"].ExecuteTemplate(&buf, name, data); err != nil {
 		slog.Error("render partial failed", "partial", name, "error", err)
@@ -346,14 +346,14 @@ func buildChatTools(ws *models.WorldState) []ai.Tool {
 			Function: ai.ToolFunction{
 				Name:        "moveToLocation",
 				Description: "Call this when the player moves to a different location. This advances time and updates their position.",
-				Parameters: map[string]interface{}{
+				Parameters: map[string]any{
 					"type": "object",
-					"properties": map[string]interface{}{
-						"destination": map[string]interface{}{
+					"properties": map[string]any{
+						"destination": map[string]any{
 							"type":        "string",
 							"description": "Brief description of where they are going",
 						},
-						"narrativeTime": map[string]interface{}{
+						"narrativeTime": map[string]any{
 							"type":        []string{"string", "null"},
 							"description": "New narrative time if significant time passes",
 						},
@@ -367,14 +367,14 @@ func buildChatTools(ws *models.WorldState) []ai.Tool {
 			Function: ai.ToolFunction{
 				Name:        "advanceTime",
 				Description: "Call this when significant time passes without movement",
-				Parameters: map[string]interface{}{
+				Parameters: map[string]any{
 					"type": "object",
-					"properties": map[string]interface{}{
-						"narrativeTime": map[string]interface{}{
+					"properties": map[string]any{
+						"narrativeTime": map[string]any{
 							"type":        "string",
 							"description": "New narrative time description",
 						},
-						"ticks": map[string]interface{}{
+						"ticks": map[string]any{
 							"type":        "number",
 							"description": "How many time units pass (default: 5)",
 						},
@@ -388,18 +388,18 @@ func buildChatTools(ws *models.WorldState) []ai.Tool {
 			Function: ai.ToolFunction{
 				Name:        "discoverCharacter",
 				Description: "Call this when the player encounters or notices a new character. CALL THIS SEPARATELY FOR EACH CHARACTER.",
-				Parameters: map[string]interface{}{
+				Parameters: map[string]any{
 					"type": "object",
-					"properties": map[string]interface{}{
-						"characterName": map[string]interface{}{
+					"properties": map[string]any{
+						"characterName": map[string]any{
 							"type":        "string",
 							"description": "Name of the character being discovered",
 						},
-						"introduction": map[string]interface{}{
+						"introduction": map[string]any{
 							"type":        "string",
 							"description": "How they are introduced or noticed",
 						},
-						"goals": map[string]interface{}{
+						"goals": map[string]any{
 							"type":        "string",
 							"description": "Inferred or stated goals of the character",
 						},

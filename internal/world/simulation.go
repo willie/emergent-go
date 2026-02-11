@@ -15,9 +15,9 @@ import (
 
 // SimulationResult from off-screen simulation
 type SimulationResult struct {
-	Events           []models.WorldEvent  `json:"events"`
+	Events           []models.WorldEvent   `json:"events"`
 	Conversations    []models.Conversation `json:"conversations"`
-	CharacterUpdates []CharacterUpdate    `json:"characterUpdates"`
+	CharacterUpdates []CharacterUpdate     `json:"characterUpdates"`
 }
 
 // CharacterUpdate is a character movement
@@ -119,10 +119,7 @@ func runFullSimulation(ctx context.Context, characters []models.Character, locat
 		names = append(names, c.Name)
 	}
 	characterNames := strings.Join(names, " and ")
-	turnCount := timeElapsed / 2
-	if turnCount > 8 {
-		turnCount = 8
-	}
+	turnCount := min(timeElapsed/2, 8)
 	if turnCount < 1 {
 		turnCount = 1
 	}
@@ -175,8 +172,8 @@ Generate approximately %d exchanges.`,
 
 	// Parse dialogue into messages
 	var convMessages []models.Message
-	lines := strings.Split(text, "\n")
-	for _, line := range lines {
+	lines := strings.SplitSeq(text, "\n")
+	for line := range lines {
 		line = strings.TrimSpace(line)
 		if line == "" {
 			continue
@@ -213,27 +210,27 @@ Generate approximately %d exchanges.`,
 			Function: ai.ToolFunction{
 				Name:        "reportSimulation",
 				Description: "Report events and movements from the conversation",
-				Parameters: map[string]interface{}{
+				Parameters: map[string]any{
 					"type": "object",
-					"properties": map[string]interface{}{
-						"events": map[string]interface{}{
+					"properties": map[string]any{
+						"events": map[string]any{
 							"type": "array",
-							"items": map[string]interface{}{
+							"items": map[string]any{
 								"type": "object",
-								"properties": map[string]interface{}{
-									"description":   map[string]interface{}{"type": "string"},
-									"isSignificant": map[string]interface{}{"type": "boolean"},
+								"properties": map[string]any{
+									"description":   map[string]any{"type": "string"},
+									"isSignificant": map[string]any{"type": "boolean"},
 								},
 								"required": []string{"description", "isSignificant"},
 							},
 						},
-						"movements": map[string]interface{}{
+						"movements": map[string]any{
 							"type": "array",
-							"items": map[string]interface{}{
+							"items": map[string]any{
 								"type": "object",
-								"properties": map[string]interface{}{
-									"characterName": map[string]interface{}{"type": "string"},
-									"destination":   map[string]interface{}{"type": "string"},
+								"properties": map[string]any{
+									"characterName": map[string]any{"type": "string"},
+									"destination":   map[string]any{"type": "string"},
 								},
 								"required": []string{"characterName", "destination"},
 							},
@@ -273,7 +270,7 @@ If any character EXPLICITLY decides to leave for another location, report it in 
 		tc := extractResp.Choices[0].Message.ToolCalls[0]
 		if tc.Function.Name == "reportSimulation" {
 			var args struct {
-				Events    []struct {
+				Events []struct {
 					Description   string `json:"description"`
 					IsSignificant bool   `json:"isSignificant"`
 				} `json:"events"`

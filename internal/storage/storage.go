@@ -66,7 +66,7 @@ func Set(key string, value json.RawMessage) error {
 	path := filepath.Join(dataDir, clean+".json")
 
 	// Pretty-print for readability
-	var parsed interface{}
+	var parsed any
 	if err := json.Unmarshal(value, &parsed); err == nil {
 		if pretty, err := json.MarshalIndent(parsed, "", "  "); err == nil {
 			value = pretty
@@ -131,7 +131,7 @@ func List() ([]SaveInfo, error) {
 // SetJSON stores a Go value as JSON by key.
 // It marshals directly to indented JSON and writes the file,
 // avoiding the unmarshal-remarshal round-trip that Set performs.
-func SetJSON(key string, value interface{}) error {
+func SetJSON(key string, value any) error {
 	data, err := json.MarshalIndent(value, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshal: %w", err)
@@ -149,7 +149,7 @@ func SetJSON(key string, value interface{}) error {
 }
 
 // GetJSON retrieves a JSON value and unmarshals into target
-func GetJSON(key string, target interface{}) error {
+func GetJSON(key string, target any) error {
 	data, err := Get(key)
 	if err != nil {
 		return err
