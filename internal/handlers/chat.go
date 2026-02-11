@@ -122,11 +122,11 @@ func (a *App) streamResponse(w http.ResponseWriter, r *http.Request, session *wo
 
 	// Stream tokens
 	result, err := ai.StreamText(ctx, model, fullMessages, tools, func(content string) {
-		writeSSE(w, flusher, "token", html.EscapeString(content))
+		writeSSE(w, flusher, "token", content)
 	})
 
 	if err != nil {
-		writeSSE(w, flusher, "error", html.EscapeString(err.Error()))
+		writeSSE(w, flusher, "error", err.Error())
 		writeSSE(w, flusher, "done", "")
 		return
 	}
@@ -184,12 +184,17 @@ func (a *App) renderOOBUpdates(session *world.SessionState) string {
 	fmt.Fprintf(&buf, `<span id="present-chars" hx-swap-oob="innerHTML">%s</span>`, strings.Join(names, ", "))
 
 	// Offscreen conversations — use cached template
-	fmt.Fprintf(&buf, `<div id="offscreen-content" hx-swap-oob="innerHTML">%s</div>`, a.renderPartial("offscreen_list", data))
+	fmt.Fprintf(&buf, `<div id="offscreen-content" hx-swap-oob="innerHTML">%s</div>`, singleLineHTML(a.renderPartial("offscreen_list", data)))
 
 	// Characters list — use cached template
-	fmt.Fprintf(&buf, `<div id="characters-content" hx-swap-oob="innerHTML">%s</div>`, a.renderPartial("character_list", data))
+	fmt.Fprintf(&buf, `<div id="characters-content" hx-swap-oob="innerHTML">%s</div>`, singleLineHTML(a.renderPartial("character_list", data)))
 
 	return buf.String()
+}
+
+// singleLineHTML collapses whitespace so multi-line HTML fits in a single SSE data: line
+func singleLineHTML(s string) string {
+	return strings.Join(strings.Fields(s), " ")
 }
 
 // renderPartial executes a named template block into a string

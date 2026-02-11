@@ -52,6 +52,12 @@ func NewApp() (*App, error) {
 			}
 			return "Unknown"
 		},
+		"speakerName": func(id string, names map[string]string) string {
+			if name, ok := names[id]; ok {
+				return name
+			}
+			return id
+		},
 		"renderMarkdown": func(s string) template.HTML {
 			var buf bytes.Buffer
 			if err := md.Convert([]byte(s), &buf); err != nil {
@@ -187,12 +193,13 @@ type gameData struct {
 }
 
 type offscreenConvDisplay struct {
-	ID               string
-	ParticipantNames []string
-	ParticipantIDs   []string
-	LocationName     string
+	ID                string
+	ParticipantNames  []string
+	ParticipantIDs    []string
+	LocationName      string
 	LocationClusterID string
-	Messages         []models.Message
+	Messages          []models.Message
+	SpeakerNames      map[string]string
 }
 
 // buildGameData constructs the gameData struct from session state
@@ -200,10 +207,23 @@ func (a *App) buildGameData(session *world.SessionState) gameData {
 	var offscreenConvs []offscreenConvDisplay
 	for _, conv := range session.GetOffscreenConversations() {
 		var names []string
+		speakerNames := make(map[string]string)
 		for _, pid := range conv.ParticipantIDs {
 			c, ok := session.GetCharacterByID(pid)
 			if ok {
 				names = append(names, c.Name)
+				speakerNames[pid] = c.Name
+			}
+		}
+		// Also resolve speaker IDs from messages that may not be participants
+		for _, msg := range conv.Messages {
+			if msg.SpeakerID != "" {
+				if _, exists := speakerNames[msg.SpeakerID]; !exists {
+					c, ok := session.GetCharacterByID(msg.SpeakerID)
+					if ok {
+						speakerNames[msg.SpeakerID] = c.Name
+					}
+				}
 			}
 		}
 		locName := "Unknown"
@@ -218,6 +238,7 @@ func (a *App) buildGameData(session *world.SessionState) gameData {
 			LocationName:      locName,
 			LocationClusterID: conv.LocationClusterID,
 			Messages:          conv.Messages,
+			SpeakerNames:      speakerNames,
 		})
 	}
 
@@ -265,7 +286,7 @@ func (a *App) NewGame(w http.ResponseWriter, r *http.Request) {
 	session := a.getSession(w, r)
 	scenario := world.BuiltinScenarios[idx]
 	saveKey := fmt.Sprintf("surat-world-storage-game-%d", uuid.New().ID())
-	session.ActiveSaveKey = saveKey
+	session.SetActiveSaveKey(saveKey)
 
 	if err := session.InitializeScenario(scenario); err != nil {
 		http.Error(w, "Failed to initialize: "+err.Error(), 500)
@@ -300,7 +321,7 @@ func (a *App) NewCustomGame(w http.ResponseWriter, r *http.Request) {
 	session := a.getSession(w, r)
 	scenario := customScenarios[idx]
 	saveKey := fmt.Sprintf("surat-world-storage-game-%d", uuid.New().ID())
-	session.ActiveSaveKey = saveKey
+	session.SetActiveSaveKey(saveKey)
 
 	if err := session.InitializeScenario(scenario); err != nil {
 		http.Error(w, "Failed to initialize: "+err.Error(), 500)
@@ -397,7 +418,7 @@ func (a *App) PartialSaves(w http.ResponseWriter, r *http.Request) {
 		if s.ID != "surat-world-storage" {
 			name = strings.ReplaceAll(strings.TrimPrefix(s.ID, "surat-world-storage-"), "-", " ")
 		}
-		isActive := s.ID == session.ActiveSaveKey
+		isActive := s.ID == session.GetActiveSaveKey()
 
 		activeClass := "bg-zinc-800/50 border-zinc-700 hover:bg-zinc-800"
 		nameClass := "text-zinc-200"

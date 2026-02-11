@@ -111,7 +111,7 @@ Write a brief 1-2 sentence summary of their interactions. Be specific but concis
 	}, nil
 }
 
-var dialogueLineRe = regexp.MustCompile(`^([A-Za-z]+):\s*(.+)$`)
+var dialogueLineRe = regexp.MustCompile(`^([A-Za-z][A-Za-z ]+):\s*(.+)$`)
 
 func runFullSimulation(ctx context.Context, characters []models.Character, locationName string, timeElapsed int, world *models.WorldState, modelID string) (*SimulationResult, error) {
 	var names []string

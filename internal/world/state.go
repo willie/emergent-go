@@ -17,7 +17,6 @@ type SessionState struct {
 	mu                  sync.RWMutex
 	World               *models.WorldState
 	ChatMessages        []models.ChatMessage
-	ProcessedTools      map[string]bool
 	ActiveSaveKey       string
 	LastSimulationTick  int
 	ModelID             string
@@ -27,7 +26,6 @@ type SessionState struct {
 // NewSessionState creates a new session state
 func NewSessionState() *SessionState {
 	return &SessionState{
-		ProcessedTools: make(map[string]bool),
 		ActiveSaveKey:  "surat-world-storage",
 		ModelID:        "deepseek/deepseek-v3.1-terminus:exacto",
 	}
@@ -128,7 +126,6 @@ func (s *SessionState) InitializeScenario(config models.ScenarioConfig) error {
 	}
 
 	s.ChatMessages = nil
-	s.ProcessedTools = make(map[string]bool)
 	s.LastSimulationTick = 0
 
 	return s.persist()
@@ -140,7 +137,6 @@ func (s *SessionState) ResetWorld() {
 	defer s.mu.Unlock()
 	s.World = nil
 	s.ChatMessages = nil
-	s.ProcessedTools = make(map[string]bool)
 	s.IsSimulating = false
 }
 
@@ -553,6 +549,20 @@ func (s *SessionState) SetLastSimulationTick(tick int) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.LastSimulationTick = tick
+}
+
+// GetActiveSaveKey returns the active save key under a read lock.
+func (s *SessionState) GetActiveSaveKey() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.ActiveSaveKey
+}
+
+// SetActiveSaveKey sets the active save key under a write lock.
+func (s *SessionState) SetActiveSaveKey(key string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.ActiveSaveKey = key
 }
 
 // GetChatMessagesCopy returns a defensive copy of the chat messages slice.

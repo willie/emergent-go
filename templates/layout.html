@@ -162,7 +162,10 @@
                             }
                             const target = document.getElementById('stream-content');
                             if (target) {
-                                target.innerHTML += '<span class="text-red-400">Error: ' + data + '</span>';
+                                const errSpan = document.createElement('span');
+                                errSpan.className = 'text-red-400';
+                                errSpan.textContent = 'Error: ' + data;
+                                target.appendChild(errSpan);
                             }
                         } else if (event === 'oob') {
                             // Process out-of-band swaps

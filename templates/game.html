@@ -207,9 +207,10 @@
         {{if not .Messages}}
         <p class="text-xs text-zinc-600 italic">Nothing yet...</p>
         {{else}}
+        {{$speakerNames := .SpeakerNames}}
         {{range .Messages}}
         <div class="text-sm">
-            {{if .SpeakerID}}<span class="font-medium text-zinc-400">{{.SpeakerID}}: </span>{{end}}
+            {{if .SpeakerID}}<span class="font-medium text-zinc-400">{{speakerName .SpeakerID $speakerNames}}: </span>{{end}}
             <span class="text-zinc-300">{{.Content}}</span>
         </div>
         {{end}}

@@ -16,6 +16,7 @@ import (
 )
 
 var httpClient = &http.Client{Timeout: 120 * time.Second}
+var streamClient = &http.Client{} // no timeout — context handles cancellation for streams
 
 const apiURL = "https://openrouter.ai/api/v1/chat/completions"
 
@@ -51,7 +52,7 @@ func Init() {
 
 // doWithRetry executes an HTTP request, retrying on transient errors (5xx, network).
 // The caller must close resp.Body on success.
-func doWithRetry(ctx context.Context, buildReq func() (*http.Request, error)) (*http.Response, error) {
+func doWithRetry(ctx context.Context, client *http.Client, buildReq func() (*http.Request, error)) (*http.Response, error) {
 	backoff := []time.Duration{0, 1 * time.Second, 2 * time.Second, 4 * time.Second}
 	var lastErr error
 
@@ -70,7 +71,7 @@ func doWithRetry(ctx context.Context, buildReq func() (*http.Request, error)) (*
 			return nil, err
 		}
 
-		resp, err := httpClient.Do(req)
+		resp, err := client.Do(req)
 		if err != nil {
 			lastErr = fmt.Errorf("do request: %w", err)
 			continue
@@ -186,7 +187,7 @@ func GenerateText(ctx context.Context, model string, messages []ChatMessage, too
 		return nil, fmt.Errorf("marshal request: %w", err)
 	}
 
-	resp, err := doWithRetry(ctx, func() (*http.Request, error) {
+	resp, err := doWithRetry(ctx, httpClient, func() (*http.Request, error) {
 		httpReq, err := http.NewRequestWithContext(ctx, "POST", apiURL, bytes.NewReader(body))
 		if err != nil {
 			return nil, fmt.Errorf("create request: %w", err)
@@ -252,7 +253,7 @@ func StreamText(ctx context.Context, model string, messages []ChatMessage, tools
 		return nil, fmt.Errorf("marshal request: %w", err)
 	}
 
-	resp, err := doWithRetry(ctx, func() (*http.Request, error) {
+	resp, err := doWithRetry(ctx, streamClient, func() (*http.Request, error) {
 		httpReq, err := http.NewRequestWithContext(ctx, "POST", apiURL, bytes.NewReader(body))
 		if err != nil {
 			return nil, fmt.Errorf("create request: %w", err)
