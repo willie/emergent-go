@@ -3,6 +3,7 @@ package handlers
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 
 	"emergent/internal/storage"
 )
@@ -22,6 +23,15 @@ func (a *App) StorageHandler(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(405)
 		json.NewEncoder(w).Encode(map[string]string{"error": "method not allowed"})
 	}
+}
+
+func validStorageKey(key string) bool {
+	for _, prefix := range []string{"surat-world-storage", "surat-chat-messages", "custom_scenarios"} {
+		if key == prefix || strings.HasPrefix(key, prefix+"-") {
+			return true
+		}
+	}
+	return false
 }
 
 func (a *App) storageGet(w http.ResponseWriter, r *http.Request) {
@@ -44,6 +54,12 @@ func (a *App) storageGet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !validStorageKey(key) {
+		w.WriteHeader(403)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Invalid storage key"})
+		return
+	}
+
 	data, err := storage.Get(key)
 	if err != nil {
 		json.NewEncoder(w).Encode(nil)
@@ -57,6 +73,8 @@ func (a *App) storageGet(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) storagePost(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 5<<20)
+
 	var body struct {
 		Key   string          `json:"key"`
 		Value json.RawMessage `json:"value"`
@@ -70,6 +88,12 @@ func (a *App) storagePost(w http.ResponseWriter, r *http.Request) {
 	if body.Key == "" || body.Value == nil {
 		w.WriteHeader(400)
 		json.NewEncoder(w).Encode(map[string]string{"error": "Key and value are required"})
+		return
+	}
+
+	if !validStorageKey(body.Key) {
+		w.WriteHeader(403)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Invalid storage key"})
 		return
 	}
 
@@ -87,6 +111,12 @@ func (a *App) storageDelete(w http.ResponseWriter, r *http.Request) {
 	if key == "" {
 		w.WriteHeader(400)
 		json.NewEncoder(w).Encode(map[string]string{"error": "Key is required"})
+		return
+	}
+
+	if !validStorageKey(key) {
+		w.WriteHeader(403)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Invalid storage key"})
 		return
 	}
 

@@ -128,12 +128,11 @@
             }).then(response => {
                 const reader = response.body.getReader();
                 const decoder = new TextDecoder();
-                let buffer = '';
+                let pending = '';
                 let streamStarted = false;
 
                 function processLine(line) {
                     if (line.startsWith('event: ')) {
-                        buffer = ''; // clear data buffer for new event
                         processLine._currentEvent = line.slice(7).trim();
                         return;
                     }
@@ -201,11 +200,13 @@
                 function pump() {
                     return reader.read().then(({ done, value }) => {
                         if (done) {
+                            if (pending.trim()) processLine(pending);
                             setChatBusy(false);
                             return;
                         }
                         const text = decoder.decode(value, { stream: true });
-                        const lines = text.split('\n');
+                        const lines = (pending + text).split('\n');
+                        pending = lines.pop();
                         for (const line of lines) {
                             if (line.trim()) processLine(line);
                         }

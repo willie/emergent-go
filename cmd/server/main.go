@@ -63,6 +63,8 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
+	app.StartEviction(ctx)
+
 	go func() {
 		slog.Info("server starting", "addr", "http://localhost:"+port)
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {

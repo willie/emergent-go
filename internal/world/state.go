@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 
 	"emergent/internal/models"
 	"emergent/internal/storage"
@@ -21,14 +22,30 @@ type SessionState struct {
 	LastSimulationTick  int
 	ModelID             string
 	IsSimulating        bool
+	LastAccessed        time.Time
 }
 
 // NewSessionState creates a new session state
 func NewSessionState() *SessionState {
 	return &SessionState{
-		ActiveSaveKey:  "surat-world-storage",
-		ModelID:        "deepseek/deepseek-v3.1-terminus:exacto",
+		ActiveSaveKey: "surat-world-storage",
+		ModelID:       "deepseek/deepseek-v3.1-terminus:exacto",
+		LastAccessed:  time.Now(),
 	}
+}
+
+// Touch updates the last access time
+func (s *SessionState) Touch() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.LastAccessed = time.Now()
+}
+
+// GetLastAccessed returns the last access time
+func (s *SessionState) GetLastAccessed() time.Time {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.LastAccessed
 }
 
 // InitializeScenario sets up a new world from a scenario config

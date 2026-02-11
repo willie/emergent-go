@@ -17,6 +17,11 @@ import (
 	"github.com/google/uuid"
 )
 
+type toolCallResult struct {
+	ToolCall ai.ToolCall
+	Result   string
+}
+
 // writeSSE writes a single SSE event to the response
 func writeSSE(w http.ResponseWriter, flusher http.Flusher, event, data string) {
 	if event != "" {
@@ -36,8 +41,16 @@ func (a *App) ChatSend(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Method not allowed", 405)
 		return
 	}
+	if sid := a.getSessionID(r); sid != "" {
+		mu := a.getSessionMutex(sid)
+		mu.Lock()
+		defer mu.Unlock()
+	}
 
-	r.ParseForm()
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "Bad request", 400)
+		return
+	}
 	message := strings.TrimSpace(r.FormValue("message"))
 	if message == "" {
 		http.Error(w, "Empty message", 400)
@@ -69,6 +82,11 @@ func (a *App) ChatContinue(w http.ResponseWriter, r *http.Request) {
 	if r.Method != "POST" {
 		http.Error(w, "Method not allowed", 405)
 		return
+	}
+	if sid := a.getSessionID(r); sid != "" {
+		mu := a.getSessionMutex(sid)
+		mu.Lock()
+		defer mu.Unlock()
 	}
 
 	session := a.getSession(w, r)
@@ -120,35 +138,68 @@ func (a *App) streamResponse(w http.ResponseWriter, r *http.Request, session *wo
 		model = ai.Models.MainConversation
 	}
 
-	// Stream tokens
-	result, err := ai.StreamText(ctx, model, fullMessages, tools, func(content string) {
-		writeSSE(w, flusher, "token", content)
-	})
+	const maxToolSteps = 5
+	var finalContent strings.Builder
 
-	if err != nil {
-		writeSSE(w, flusher, "error", err.Error())
-		writeSSE(w, flusher, "done", "")
-		return
+	for step := range maxToolSteps {
+		// Stream tokens
+		result, err := ai.StreamText(ctx, model, fullMessages, tools, func(content string) {
+			writeSSE(w, flusher, "token", content)
+		})
+
+		if err != nil {
+			slog.Error("AI streaming failed", "step", step, "error", err)
+			writeSSE(w, flusher, "error", "Something went wrong. Please try again.")
+			writeSSE(w, flusher, "done", "")
+			return
+		}
+
+		finalContent.WriteString(result.Content)
+
+		if len(result.ToolCalls) == 0 {
+			break
+		}
+
+		// Append assistant message with tool calls to conversation
+		fullMessages = append(fullMessages, ai.ChatMessage{
+			Role:      "assistant",
+			Content:   result.Content,
+			ToolCalls: result.ToolCalls,
+		})
+
+		// Process tool calls and get results
+		results := a.processToolCalls(ctx, session, result.ToolCalls, "")
+
+		// Append tool result messages
+		for _, tr := range results {
+			fullMessages = append(fullMessages, ai.ChatMessage{
+				Role:       "tool",
+				Content:    tr.Result,
+				ToolCallID: tr.ToolCall.ID,
+				Name:       tr.ToolCall.Function.Name,
+			})
+		}
+
+		// Send OOB updates for state changes from this step
+		oobHTML := a.renderOOBUpdates(session)
+		if oobHTML != "" {
+			writeSSE(w, flusher, "oob", oobHTML)
+		}
+
+		// Rebuild system prompt since world state changed
+		ws = session.GetWorld()
+		systemPrompt = buildSystemPrompt(ws)
+		tools = buildChatTools(ws)
+		fullMessages[0] = ai.ChatMessage{Role: "system", Content: systemPrompt}
 	}
 
 	// Save assistant message
 	assistantMsg := models.ChatMessage{
 		ID:      uuid.New().String(),
 		Role:    "assistant",
-		Content: result.Content,
+		Content: finalContent.String(),
 	}
 	session.AddChatMessage(assistantMsg)
-
-	// Process tool calls and build OOB updates
-	if len(result.ToolCalls) > 0 {
-		a.processToolCalls(ctx, session, result.ToolCalls, assistantMsg.ID)
-
-		// Render OOB swap fragments for changed state
-		oobHTML := a.renderOOBUpdates(session)
-		if oobHTML != "" {
-			writeSSE(w, flusher, "oob", oobHTML)
-		}
-	}
 
 	// Persist state
 	if err := session.Persist(); err != nil {
@@ -331,8 +382,14 @@ IMPORTANT:
 - Never break the fourth wall
 - Don't explain game mechanics
 - Let the player drive the story
-- If you introduce or mention any character (whether from the "HIDDEN" list or a new one you create), you MUST call the discoverCharacter tool for them.
-- You can call multiple tools in a single turn if needed.`,
+- If you introduce or mention any character (whether from the "HIDDEN" list or a new one you create), you MUST call the discoverCharacter tool for them. Do not just describe them; use the tool to make them official.
+- Check the recent history: if a character has been speaking or present but is NOT in the "CHARACTERS PRESENT" list above, call discoverCharacter for them immediately!
+- You can call multiple tools in a single turn if needed (e.g. discovering two characters).
+
+EXAMPLES:
+- Player walks into a tavern with two unknown people → call discoverCharacter for each one AND write your narrative
+- Player asks to go to the market → call moveToLocation with the destination, then narrate the arrival
+- A long conversation happens → call advanceTime to reflect the passage of time`,
 		ws.Scenario.Title, ws.Scenario.Description,
 		locationName, otherLocStr,
 		ws.Time.NarrativeTime, ws.Time.Tick,
@@ -411,37 +468,47 @@ func buildChatTools(ws *models.WorldState) []ai.Tool {
 	}
 }
 
-func (a *App) processToolCalls(ctx context.Context, session *world.SessionState, toolCalls []ai.ToolCall, messageID string) {
+func (a *App) processToolCalls(ctx context.Context, session *world.SessionState, toolCalls []ai.ToolCall, messageID string) []toolCallResult {
+	var results []toolCallResult
 	for _, tc := range toolCalls {
+		var result string
 		switch tc.Function.Name {
 		case "moveToLocation":
-			a.handleMoveToLocation(ctx, session, tc, messageID)
+			r, err := a.handleMoveToLocation(ctx, session, tc, messageID)
+			if err != nil {
+				slog.Error("moveToLocation failed", "error", err)
+				r = "Failed to move."
+			}
+			result = r
 		case "advanceTime":
-			a.handleAdvanceTime(session, tc)
+			result = a.handleAdvanceTime(session, tc)
 		case "discoverCharacter":
-			a.handleDiscoverCharacter(session, tc, messageID)
+			result = a.handleDiscoverCharacter(session, tc, messageID)
+		default:
+			result = "Unknown tool."
 		}
+		results = append(results, toolCallResult{ToolCall: tc, Result: result})
 	}
+	return results
 }
 
-func (a *App) handleMoveToLocation(ctx context.Context, session *world.SessionState, tc ai.ToolCall, messageID string) {
+func (a *App) handleMoveToLocation(ctx context.Context, session *world.SessionState, tc ai.ToolCall, messageID string) (string, error) {
 	var args struct {
 		Destination   string  `json:"destination"`
 		NarrativeTime *string `json:"narrativeTime"`
 	}
 	if err := json.Unmarshal([]byte(tc.Function.Arguments), &args); err != nil {
-		slog.Error("failed to parse tool args", "tool", "moveToLocation", "error", err)
-		return
+		return "", fmt.Errorf("parse moveToLocation args: %w", err)
 	}
 
 	ws := session.GetWorld()
 	if ws == nil {
-		return
+		return "Could not move.", nil
 	}
 
 	player, ok := findPlayer(ws)
 	if !ok {
-		return
+		return "Could not move.", nil
 	}
 	previousLocationID := player.CurrentLocationClusterID
 
@@ -507,16 +574,30 @@ func (a *App) handleMoveToLocation(ctx context.Context, session *world.SessionSt
 		narrativeTime = *args.NarrativeTime
 	}
 	session.AdvanceTime(models.TimeCosts["move"], narrativeTime)
+
+	destName := resolved.CanonicalName
+	if destName == "" {
+		destName = args.Destination
+	}
+	chars := session.GetCharactersAtPlayerLocation()
+	if len(chars) > 0 {
+		var names []string
+		for _, c := range chars {
+			names = append(names, c.Name)
+		}
+		return fmt.Sprintf("Moved to %s. Characters present: %s.", destName, strings.Join(names, ", ")), nil
+	}
+	return fmt.Sprintf("Moved to %s.", destName), nil
 }
 
-func (a *App) handleAdvanceTime(session *world.SessionState, tc ai.ToolCall) {
+func (a *App) handleAdvanceTime(session *world.SessionState, tc ai.ToolCall) string {
 	var args struct {
 		NarrativeTime string `json:"narrativeTime"`
 		Ticks         *int   `json:"ticks"`
 	}
 	if err := json.Unmarshal([]byte(tc.Function.Arguments), &args); err != nil {
 		slog.Error("failed to parse tool args", "tool", "advanceTime", "error", err)
-		return
+		return "Failed to advance time."
 	}
 
 	ticks := 5
@@ -524,9 +605,10 @@ func (a *App) handleAdvanceTime(session *world.SessionState, tc ai.ToolCall) {
 		ticks = *args.Ticks
 	}
 	session.AdvanceTime(ticks, args.NarrativeTime)
+	return fmt.Sprintf("Time advanced by %d ticks. It is now %s.", ticks, args.NarrativeTime)
 }
 
-func (a *App) handleDiscoverCharacter(session *world.SessionState, tc ai.ToolCall, messageID string) {
+func (a *App) handleDiscoverCharacter(session *world.SessionState, tc ai.ToolCall, messageID string) string {
 	var args struct {
 		CharacterName string `json:"characterName"`
 		Introduction  string `json:"introduction"`
@@ -534,7 +616,7 @@ func (a *App) handleDiscoverCharacter(session *world.SessionState, tc ai.ToolCal
 	}
 	if err := json.Unmarshal([]byte(tc.Function.Arguments), &args); err != nil {
 		slog.Error("failed to parse tool args", "tool", "discoverCharacter", "error", err)
-		return
+		return "Failed to discover character."
 	}
 
 	match, found := session.FindBestCharacterMatch(args.CharacterName)
@@ -565,6 +647,7 @@ func (a *App) handleDiscoverCharacter(session *world.SessionState, tc ai.ToolCal
 			Goals:                    args.Goals,
 		})
 	}
+	return fmt.Sprintf("Character %s discovered.", args.CharacterName)
 }
 
 func findPlayer(ws *models.WorldState) (models.Character, bool) {

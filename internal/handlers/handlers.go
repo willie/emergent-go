@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"html"
@@ -11,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"emergent/internal/ai"
 	"emergent/internal/models"
@@ -26,9 +28,10 @@ const sessionCookieName = "emergent_session"
 
 // App holds the application state and dependencies
 type App struct {
-	PageTemplates map[string]*template.Template
-	FuncMap       template.FuncMap
-	sessions      sync.Map // map[string]*world.SessionState
+	PageTemplates  map[string]*template.Template
+	FuncMap        template.FuncMap
+	sessions       sync.Map // map[string]*world.SessionState
+	sessionMutexes sync.Map // map[string]*sync.Mutex
 }
 
 // NewApp creates a new app with templates compiled at startup
@@ -89,7 +92,9 @@ func NewApp() (*App, error) {
 func (a *App) getSession(w http.ResponseWriter, r *http.Request) *world.SessionState {
 	if cookie, err := r.Cookie(sessionCookieName); err == nil {
 		if val, ok := a.sessions.Load(cookie.Value); ok {
-			return val.(*world.SessionState)
+			session := val.(*world.SessionState)
+			session.Touch()
+			return session
 		}
 	}
 
@@ -108,6 +113,18 @@ func (a *App) getSession(w http.ResponseWriter, r *http.Request) *world.SessionS
 
 	a.sessions.Store(id, session)
 	return session
+}
+
+func (a *App) getSessionMutex(sessionID string) *sync.Mutex {
+	v, _ := a.sessionMutexes.LoadOrStore(sessionID, &sync.Mutex{})
+	return v.(*sync.Mutex)
+}
+
+func (a *App) getSessionID(r *http.Request) string {
+	if cookie, err := r.Cookie(sessionCookieName); err == nil {
+		return cookie.Value
+	}
+	return ""
 }
 
 // compilePageTemplate parses layout + a specific page template + partials into one set
@@ -275,7 +292,15 @@ func (a *App) NewGame(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/", http.StatusSeeOther)
 		return
 	}
-	r.ParseForm()
+	if sid := a.getSessionID(r); sid != "" {
+		mu := a.getSessionMutex(sid)
+		mu.Lock()
+		defer mu.Unlock()
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "Bad request", 400)
+		return
+	}
 	idxStr := r.FormValue("scenario_index")
 	idx, err := strconv.Atoi(idxStr)
 	if err != nil || idx < 0 || idx >= len(world.BuiltinScenarios) {
@@ -302,7 +327,15 @@ func (a *App) NewCustomGame(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/", http.StatusSeeOther)
 		return
 	}
-	r.ParseForm()
+	if sid := a.getSessionID(r); sid != "" {
+		mu := a.getSessionMutex(sid)
+		mu.Lock()
+		defer mu.Unlock()
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "Bad request", 400)
+		return
+	}
 	idxStr := r.FormValue("scenario_index")
 	idx, err := strconv.Atoi(idxStr)
 	if err != nil {
@@ -333,6 +366,11 @@ func (a *App) NewCustomGame(w http.ResponseWriter, r *http.Request) {
 
 // LoadGame loads an existing save
 func (a *App) LoadGame(w http.ResponseWriter, r *http.Request) {
+	if sid := a.getSessionID(r); sid != "" {
+		mu := a.getSessionMutex(sid)
+		mu.Lock()
+		defer mu.Unlock()
+	}
 	saveID := r.URL.Query().Get("save")
 	if saveID == "" {
 		http.Redirect(w, r, "/", http.StatusSeeOther)
@@ -349,6 +387,11 @@ func (a *App) LoadGame(w http.ResponseWriter, r *http.Request) {
 
 // ExitGame exits to the main menu
 func (a *App) ExitGame(w http.ResponseWriter, r *http.Request) {
+	if sid := a.getSessionID(r); sid != "" {
+		mu := a.getSessionMutex(sid)
+		mu.Lock()
+		defer mu.Unlock()
+	}
 	session := a.getSession(w, r)
 	_ = session.Persist()
 	session.ResetWorld()
@@ -362,7 +405,10 @@ func (a *App) ImportScenario(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	r.ParseMultipartForm(10 << 20)
+	if err := r.ParseMultipartForm(10 << 20); err != nil {
+		http.Error(w, "Bad request", 400)
+		return
+	}
 	file, _, err := r.FormFile("scenario")
 	if err != nil {
 		http.Error(w, "Failed to read file", 400)
@@ -382,9 +428,15 @@ func (a *App) ImportScenario(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var customScenarios []models.ScenarioConfig
-	_ = storage.GetJSON("custom_scenarios", &customScenarios)
+	if err := storage.GetJSON("custom_scenarios", &customScenarios); err != nil {
+		slog.Info("no existing custom scenarios, starting fresh", "error", err)
+	}
 	customScenarios = append(customScenarios, scenario)
-	_ = storage.SetJSON("custom_scenarios", customScenarios)
+	if err := storage.SetJSON("custom_scenarios", customScenarios); err != nil {
+		slog.Error("failed to save custom scenarios", "error", err)
+		http.Error(w, "Failed to save scenario", 500)
+		return
+	}
 
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
@@ -395,7 +447,15 @@ func (a *App) SetModel(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/", http.StatusSeeOther)
 		return
 	}
-	r.ParseForm()
+	if sid := a.getSessionID(r); sid != "" {
+		mu := a.getSessionMutex(sid)
+		mu.Lock()
+		defer mu.Unlock()
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "Bad request", 400)
+		return
+	}
 	session := a.getSession(w, r)
 	model := r.FormValue("model")
 	if model != "" {
@@ -441,4 +501,36 @@ func (a *App) PartialSaves(w http.ResponseWriter, r *http.Request) {
 			html.EscapeString(s.ID), activeClass, nameClass, html.EscapeString(name), currentLabel,
 			s.UpdatedAt.Format("Jan 2, 2006 3:04 PM"))
 	}
+}
+
+// StartEviction starts a background goroutine that evicts idle sessions
+func (a *App) StartEviction(ctx context.Context) {
+	go func() {
+		ticker := time.NewTicker(5 * time.Minute)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				a.evictSessions()
+			}
+		}
+	}()
+}
+
+func (a *App) evictSessions() {
+	now := time.Now()
+	a.sessions.Range(func(key, value any) bool {
+		session := value.(*world.SessionState)
+		if now.Sub(session.GetLastAccessed()) > 1*time.Hour {
+			if err := session.Persist(); err != nil {
+				slog.Error("failed to persist session before eviction", "session", key, "error", err)
+			}
+			a.sessions.Delete(key)
+			a.sessionMutexes.Delete(key)
+			slog.Info("evicted idle session", "session", key)
+		}
+		return true
+	})
 }
