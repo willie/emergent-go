@@ -9,6 +9,7 @@ import (
 	"syscall"
 	"time"
 
+	"emergent"
 	"emergent/internal/ai"
 	"emergent/internal/handlers"
 )
@@ -21,7 +22,7 @@ func main() {
 	ai.Init()
 
 	// Create app
-	app, err := handlers.NewApp()
+	app, err := handlers.NewApp(emergent.TemplateFS)
 	if err != nil {
 		slog.Error("failed to initialize app", "error", err)
 		os.Exit(1)
@@ -35,7 +36,7 @@ func main() {
 	mux.HandleFunc("POST /game/new", app.NewGame)
 	mux.HandleFunc("POST /game/new-custom", app.NewCustomGame)
 	mux.HandleFunc("GET /game/load", app.LoadGame)
-	mux.HandleFunc("/game/exit", app.ExitGame)
+	mux.HandleFunc("POST /game/exit", app.ExitGame)
 	mux.HandleFunc("POST /scenario/import", app.ImportScenario)
 	mux.HandleFunc("POST /settings/model", app.SetModel)
 
@@ -45,6 +46,9 @@ func main() {
 	// API - Chat (returns streamed HTML)
 	mux.HandleFunc("POST /api/chat", app.ChatSend)
 	mux.HandleFunc("POST /api/chat/continue", app.ChatContinue)
+	mux.HandleFunc("POST /api/chat/edit", app.EditMessage)
+	mux.HandleFunc("POST /api/chat/rewind", app.RewindChat)
+	mux.HandleFunc("POST /api/chat/regenerate", app.RegenerateChat)
 
 	// Storage API (JSON, for compatibility)
 	mux.HandleFunc("/api/storage", app.StorageHandler)

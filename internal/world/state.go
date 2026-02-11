@@ -495,9 +495,10 @@ func (s *SessionState) Load(saveKey string) error {
 		return err
 	}
 	if data != nil {
-		if err := json.Unmarshal(data, &world); err == nil {
-			s.World = &world
+		if err := json.Unmarshal(data, &world); err != nil {
+			return fmt.Errorf("unmarshal world: %w", err)
 		}
+		s.World = &world
 	}
 
 	msgKey := s.getChatKey()
@@ -519,10 +520,8 @@ func (s *SessionState) AddChatMessage(msg models.ChatMessage) {
 	s.ChatMessages = append(s.ChatMessages, msg)
 }
 
-// GetWorld returns the world state pointer under a read lock.
+// GetWorld returns the world state pointer. Caller must hold the session mutex.
 func (s *SessionState) GetWorld() *models.WorldState {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
 	return s.World
 }
 
@@ -589,6 +588,49 @@ func (s *SessionState) GetChatMessagesCopy() []models.ChatMessage {
 	cp := make([]models.ChatMessage, len(s.ChatMessages))
 	copy(cp, s.ChatMessages)
 	return cp
+}
+
+// EditChatMessage updates the content of a chat message by ID.
+func (s *SessionState) EditChatMessage(id, content string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i, m := range s.ChatMessages {
+		if m.ID == id {
+			s.ChatMessages[i].Content = content
+			return true
+		}
+	}
+	return false
+}
+
+// TruncateChatMessages removes all messages at or after the given index.
+func (s *SessionState) TruncateChatMessages(index int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if index >= 0 && index < len(s.ChatMessages) {
+		s.ChatMessages = s.ChatMessages[:index]
+	}
+}
+
+// PopLastAssistantMessage removes and returns the last assistant message, if any.
+func (s *SessionState) PopLastAssistantMessage() (models.ChatMessage, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i := len(s.ChatMessages) - 1; i >= 0; i-- {
+		if s.ChatMessages[i].Role == "assistant" {
+			msg := s.ChatMessages[i]
+			s.ChatMessages = append(s.ChatMessages[:i], s.ChatMessages[i+1:]...)
+			return msg, true
+		}
+	}
+	return models.ChatMessage{}, false
+}
+
+// ChatMessageCount returns the number of chat messages.
+func (s *SessionState) ChatMessageCount() int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return len(s.ChatMessages)
 }
 
 // UpdateCharacter updates character fields

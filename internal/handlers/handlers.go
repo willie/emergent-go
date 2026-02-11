@@ -7,8 +7,10 @@ import (
 	"fmt"
 	"html"
 	"html/template"
+	"io/fs"
 	"log/slog"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -30,17 +32,19 @@ const sessionCookieName = "emergent_session"
 type App struct {
 	PageTemplates  map[string]*template.Template
 	FuncMap        template.FuncMap
+	templateFS     fs.FS
 	sessions       sync.Map // map[string]*world.SessionState
 	sessionMutexes sync.Map // map[string]*sync.Mutex
 }
 
 // NewApp creates a new app with templates compiled at startup
-func NewApp() (*App, error) {
+func NewApp(templateFS fs.FS) (*App, error) {
 	md := goldmark.New(
 		goldmark.WithRendererOptions(goldmarkhtml.WithHardWraps()),
 	)
 
 	funcMap := template.FuncMap{
+		"sub": func(a, b int) int { return a - b },
 		"lastN": func(items []models.KnowledgeEntry, n int) []models.KnowledgeEntry {
 			if len(items) <= n {
 				return items
@@ -73,7 +77,7 @@ func NewApp() (*App, error) {
 	// Pre-compile all page templates at startup
 	pages := map[string]*template.Template{}
 	for _, page := range []string{"scenario_selector.html", "game.html"} {
-		tmpl, err := compilePageTemplate(funcMap, page)
+		tmpl, err := compilePageTemplate(templateFS, funcMap, page)
 		if err != nil {
 			return nil, fmt.Errorf("compile %s: %w", page, err)
 		}
@@ -83,6 +87,7 @@ func NewApp() (*App, error) {
 	return &App{
 		PageTemplates: pages,
 		FuncMap:       funcMap,
+		templateFS:    templateFS,
 	}, nil
 }
 
@@ -128,18 +133,15 @@ func (a *App) getSessionID(r *http.Request) string {
 }
 
 // compilePageTemplate parses layout + a specific page template + partials into one set
-func compilePageTemplate(funcMap template.FuncMap, page string) (*template.Template, error) {
-	files := []string{"templates/layout.html", "templates/" + page}
-	tmpl, err := template.New("").Funcs(funcMap).ParseFiles(files...)
+func compilePageTemplate(templateFS fs.FS, funcMap template.FuncMap, page string) (*template.Template, error) {
+	tmpl, err := template.New("").Funcs(funcMap).ParseFS(templateFS, "templates/layout.html", "templates/"+page)
 	if err != nil {
 		return nil, err
 	}
-	partials, err := template.New("").Funcs(funcMap).ParseGlob("templates/partials/*.html")
-	if err == nil {
-		for _, t := range partials.Templates() {
-			if _, addErr := tmpl.AddParseTree(t.Name(), t.Tree); addErr != nil {
-				slog.Warn("failed to add partial", "template", t.Name(), "error", addErr)
-			}
+	partials, _ := fs.Glob(templateFS, "templates/partials/*.html")
+	if len(partials) > 0 {
+		if _, err := tmpl.ParseFS(templateFS, "templates/partials/*.html"); err != nil {
+			slog.Warn("failed to parse partials", "error", err)
 		}
 	}
 	return tmpl, nil
@@ -368,6 +370,8 @@ func (a *App) LoadGame(w http.ResponseWriter, r *http.Request) {
 	session := a.getSession(w, r)
 	if err := session.Load(saveID); err != nil {
 		slog.Error("failed to load save", "save", saveID, "error", err)
+		http.Error(w, "Failed to load save", http.StatusInternalServerError)
+		return
 	}
 
 	http.Redirect(w, r, "/", http.StatusSeeOther)
@@ -438,6 +442,10 @@ func (a *App) SetModel(w http.ResponseWriter, r *http.Request) {
 	session := a.getSession(w, r)
 	model := r.FormValue("model")
 	if model != "" {
+		if !slices.Contains(ai.AvailableModels, model) {
+			http.Error(w, "Invalid model", http.StatusBadRequest)
+			return
+		}
 		session.SetModelID(model)
 	}
 	http.Redirect(w, r, "/", http.StatusSeeOther)
@@ -503,11 +511,16 @@ func (a *App) evictSessions() {
 	a.sessions.Range(func(key, value any) bool {
 		session := value.(*world.SessionState)
 		if now.Sub(session.GetLastAccessed()) > 1*time.Hour {
+			mu := a.getSessionMutex(key.(string))
+			if !mu.TryLock() {
+				return true // in use, skip
+			}
 			if err := session.Persist(); err != nil {
 				slog.Error("failed to persist session before eviction", "session", key, "error", err)
 			}
 			a.sessions.Delete(key)
 			a.sessionMutexes.Delete(key)
+			mu.Unlock()
 			slog.Info("evicted idle session", "session", key)
 		}
 		return true

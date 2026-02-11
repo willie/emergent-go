@@ -8,6 +8,7 @@ import (
 	"html"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"emergent/internal/ai"
@@ -142,7 +143,7 @@ func (a *App) streamResponse(w http.ResponseWriter, r *http.Request, session *wo
 		if err != nil {
 			slog.Error("AI streaming failed", "step", step, "error", err)
 			writeSSE(w, flusher, "error", "Something went wrong. Please try again.")
-			writeSSE(w, flusher, "done", "")
+			writeSSE(w, flusher, "done", "end")
 			return
 		}
 
@@ -204,6 +205,83 @@ func (a *App) streamResponse(w http.ResponseWriter, r *http.Request, session *wo
 	}
 
 	writeSSE(w, flusher, "done", "")
+}
+
+// EditMessage updates a chat message's content
+func (a *App) EditMessage(w http.ResponseWriter, r *http.Request) {
+	if sid := a.getSessionID(r); sid != "" {
+		mu := a.getSessionMutex(sid)
+		mu.Lock()
+		defer mu.Unlock()
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "Bad request", 400)
+		return
+	}
+	msgID := r.FormValue("message_id")
+	content := r.FormValue("content")
+	if msgID == "" || content == "" {
+		http.Error(w, "Missing message_id or content", 400)
+		return
+	}
+
+	session := a.getSession(w, r)
+	if !session.EditChatMessage(msgID, content) {
+		http.Error(w, "Message not found", 404)
+		return
+	}
+	if err := session.Persist(); err != nil {
+		slog.Error("failed to persist after edit", "error", err)
+	}
+	http.Redirect(w, r, "/", http.StatusSeeOther)
+}
+
+// RewindChat truncates chat history to before a given index
+func (a *App) RewindChat(w http.ResponseWriter, r *http.Request) {
+	if sid := a.getSessionID(r); sid != "" {
+		mu := a.getSessionMutex(sid)
+		mu.Lock()
+		defer mu.Unlock()
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "Bad request", 400)
+		return
+	}
+	idxStr := r.FormValue("index")
+	idx, err := strconv.Atoi(idxStr)
+	if err != nil || idx < 0 {
+		http.Error(w, "Invalid index", 400)
+		return
+	}
+
+	session := a.getSession(w, r)
+	session.TruncateChatMessages(idx)
+	if err := session.Persist(); err != nil {
+		slog.Error("failed to persist after rewind", "error", err)
+	}
+	http.Redirect(w, r, "/", http.StatusSeeOther)
+}
+
+// RegenerateChat removes the last assistant message and streams a new response
+func (a *App) RegenerateChat(w http.ResponseWriter, r *http.Request) {
+	if sid := a.getSessionID(r); sid != "" {
+		mu := a.getSessionMutex(sid)
+		mu.Lock()
+		defer mu.Unlock()
+	}
+
+	session := a.getSession(w, r)
+	if session.GetWorld() == nil {
+		http.Error(w, "No active game", 400)
+		return
+	}
+
+	if _, ok := session.PopLastAssistantMessage(); !ok {
+		http.Error(w, "No assistant message to regenerate", 400)
+		return
+	}
+
+	a.streamResponse(w, r, session, nil)
 }
 
 // renderOOBUpdates renders out-of-band swap HTML for header, sidebar, etc.

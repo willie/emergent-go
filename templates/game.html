@@ -55,15 +55,48 @@
                     <p class="text-sm mt-4">Type something to begin...</p>
                 </div>
                 {{end}}
-                {{range .ChatMessages}}
-                <div class="flex {{if eq .Role "user"}}justify-end{{else}}justify-start{{end}}">
-                    <div class="max-w-[80%] rounded-lg px-4 py-2 {{if eq .Role "user"}}bg-blue-600 text-white{{else}}bg-zinc-800 text-zinc-100{{end}}">
-                        {{if eq .Role "assistant"}}
-                        <div class="prose prose-invert max-w-none break-words">{{renderMarkdown .Content}}</div>
-                        {{else}}
-                        <div class="prose prose-invert max-w-none break-words whitespace-pre-wrap">{{.Content}}</div>
-                        {{end}}
+                {{$msgCount := len .ChatMessages}}
+                {{range $i, $m := .ChatMessages}}
+                <div class="group/msg flex {{if eq $m.Role "user"}}justify-end{{else}}justify-start{{end}}" data-msg-index="{{$i}}">
+                    {{if eq $m.Role "user"}}
+                    <div class="flex items-start gap-1">
+                        <div class="opacity-0 group-hover/msg:opacity-100 transition-opacity flex items-center gap-1 pt-2">
+                            <button onclick="startEditMessage('{{$m.ID}}', this)" class="text-zinc-600 hover:text-zinc-300 p-1" title="Edit">
+                                <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L10.582 16.07a4.5 4.5 0 0 1-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 0 1 1.13-1.897l8.932-8.931z"/></svg>
+                            </button>
+                            <button onclick="rewindToMessage({{$i}})" class="text-zinc-600 hover:text-zinc-300 p-1" title="Rewind here">
+                                <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 15 3 9m0 0 6-6M3 9h12a6 6 0 0 1 0 12h-3"/></svg>
+                            </button>
+                        </div>
+                        <div class="max-w-[80%] rounded-lg px-4 py-2 bg-blue-600 text-white">
+                            <div class="prose prose-invert max-w-none break-words whitespace-pre-wrap" id="msg-content-{{$m.ID}}">{{$m.Content}}</div>
+                            <form id="edit-form-{{$m.ID}}" class="hidden" method="POST" action="/api/chat/edit">
+                                <input type="hidden" name="message_id" value="{{$m.ID}}">
+                                <textarea name="content" class="w-full bg-blue-900/50 text-white p-2 rounded border border-blue-400/30 focus:outline-none focus:border-blue-400 resize-y min-h-[60px] text-sm mt-1"></textarea>
+                                <div class="flex justify-end gap-2 mt-1">
+                                    <button type="button" onclick="cancelEditMessage('{{$m.ID}}')" class="px-2 py-1 text-xs text-blue-200 hover:text-white">Cancel</button>
+                                    <button type="submit" class="px-2 py-1 text-xs bg-blue-500 hover:bg-blue-400 text-white rounded">Save</button>
+                                </div>
+                            </form>
+                        </div>
                     </div>
+                    {{else}}
+                    <div class="flex items-start gap-1">
+                        <div class="max-w-[80%] rounded-lg px-4 py-2 bg-zinc-800 text-zinc-100">
+                            <div class="prose prose-invert max-w-none break-words">{{renderMarkdown $m.Content}}</div>
+                        </div>
+                        <div class="opacity-0 group-hover/msg:opacity-100 transition-opacity flex items-center gap-1 pt-2">
+                            {{if eq $i (sub $msgCount 1)}}
+                            <button onclick="regenerateChat(this)" class="text-zinc-600 hover:text-zinc-300 p-1" title="Regenerate">
+                                <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182"/></svg>
+                            </button>
+                            {{end}}
+                            <button onclick="rewindToMessage({{$i}})" class="text-zinc-600 hover:text-zinc-300 p-1" title="Rewind here">
+                                <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 15 3 9m0 0 6-6M3 9h12a6 6 0 0 1 0 12h-3"/></svg>
+                            </button>
+                        </div>
+                    </div>
+                    {{end}}
                 </div>
                 {{end}}
                 <div id="streaming-target"></div>
@@ -171,7 +204,7 @@
                 <p class="text-zinc-500 text-center py-4">Loading saves...</p>
             </div>
             <div class="mt-4 pt-4 border-t border-zinc-800 flex justify-between items-center">
-                <a href="/game/exit" class="text-red-400 hover:text-red-300 text-sm font-medium transition-colors">Exit to Main Menu</a>
+                <form method="POST" action="/game/exit" class="inline"><button type="submit" class="text-red-400 hover:text-red-300 text-sm font-medium transition-colors">Exit to Main Menu</button></form>
                 <button onclick="closeDialog('saves-dialog')" class="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded transition-colors">Close</button>
             </div>
         </div>

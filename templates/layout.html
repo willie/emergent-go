@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Emergent World</title>
     <script src="https://unpkg.com/htmx.org@2.0.4"></script>
     <script src="https://unpkg.com/htmx-ext-sse@2.2.2/sse.js"></script>
@@ -21,6 +21,12 @@
         // Configure marked for markdown rendering
         if (typeof marked !== 'undefined') {
             marked.setOptions({ breaks: true });
+            marked.use({ renderer: {
+                html: function(token) {
+                    var t = (typeof token === 'string') ? token : (token.raw || token.text || '');
+                    return t.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+                }
+            }});
         }
 
         // Auto-scroll chat to bottom
@@ -122,10 +128,27 @@
             assistantDiv.className = 'flex justify-start';
             assistantDiv.innerHTML = '<div class="max-w-[80%] rounded-lg px-4 py-2 bg-zinc-800 text-zinc-100"><div class="prose prose-invert max-w-none break-words whitespace-pre-wrap" id="stream-content"></div></div>';
 
+            // Abort controller with 2-minute timeout
+            const controller = new AbortController();
+            const timeoutId = setTimeout(function() { controller.abort(); }, 120000);
+
             fetch(url, {
                 method: 'POST',
-                body: formData
+                body: formData,
+                signal: controller.signal
             }).then(response => {
+                if (!response.ok) {
+                    return response.text().then(text => {
+                        clearTimeout(timeoutId);
+                        const errDiv = document.createElement('div');
+                        errDiv.className = 'flex justify-start';
+                        errDiv.innerHTML = '<div class="max-w-[80%] rounded-lg px-4 py-2 bg-red-900/50 text-red-300"></div>';
+                        errDiv.firstChild.textContent = text || ('Request failed: ' + response.status);
+                        messages.appendChild(errDiv);
+                        scrollChat();
+                        setChatBusy(false);
+                    });
+                }
                 const reader = response.body.getReader();
                 const decoder = new TextDecoder();
                 let pending = '';
@@ -191,6 +214,7 @@
                             const indicator = document.getElementById('simulating-indicator');
                             if (indicator) indicator.remove();
                         } else if (event === 'done') {
+                            clearTimeout(timeoutId);
                             // Render accumulated text as markdown, then remove temp id
                             const target = document.getElementById('stream-content');
                             if (target) {
@@ -213,6 +237,7 @@
                 function pump() {
                     return reader.read().then(({ done, value }) => {
                         if (done) {
+                            clearTimeout(timeoutId);
                             if (pending.trim()) processLine(pending);
                             setChatBusy(false);
                             return;
@@ -228,7 +253,16 @@
                 }
                 return pump();
             }).catch(err => {
-                console.error('Stream error:', err);
+                clearTimeout(timeoutId);
+                if (err.name === 'AbortError') {
+                    const errDiv = document.createElement('div');
+                    errDiv.className = 'flex justify-start';
+                    errDiv.innerHTML = '<div class="max-w-[80%] rounded-lg px-4 py-2 bg-red-900/50 text-red-300">Response timed out. Please try again.</div>';
+                    messages.appendChild(errDiv);
+                    scrollChat();
+                } else {
+                    console.error('Stream error:', err);
+                }
                 setChatBusy(false);
             });
         }
@@ -250,6 +284,46 @@
         function continueChat() {
             if (chatBusy) return;
             streamChat('/api/chat/continue', new FormData());
+        }
+
+        // Message actions: edit, rewind, regenerate
+
+        function startEditMessage(msgId, btn) {
+            var content = document.getElementById('msg-content-' + msgId);
+            var form = document.getElementById('edit-form-' + msgId);
+            if (!content || !form) return;
+            form.querySelector('textarea').value = content.textContent;
+            content.classList.add('hidden');
+            form.classList.remove('hidden');
+        }
+
+        function cancelEditMessage(msgId) {
+            var content = document.getElementById('msg-content-' + msgId);
+            var form = document.getElementById('edit-form-' + msgId);
+            if (content) content.classList.remove('hidden');
+            if (form) form.classList.add('hidden');
+        }
+
+        function rewindToMessage(index) {
+            if (!confirm('Remove this message and everything after it?')) return;
+            var form = document.createElement('form');
+            form.method = 'POST';
+            form.action = '/api/chat/rewind';
+            var input = document.createElement('input');
+            input.type = 'hidden';
+            input.name = 'index';
+            input.value = index;
+            form.appendChild(input);
+            document.body.appendChild(form);
+            form.submit();
+        }
+
+        function regenerateChat(btn) {
+            if (chatBusy) return;
+            // Remove the last assistant message div from the DOM
+            var msgDiv = btn.closest('[data-msg-index]');
+            if (msgDiv) msgDiv.remove();
+            streamChat('/api/chat/regenerate', new FormData());
         }
     </script>
 </body>
