@@ -29,7 +29,6 @@ type SessionState struct {
 func NewSessionState() *SessionState {
 	return &SessionState{
 		ActiveSaveKey: "surat-world-storage",
-		ModelID:       "deepseek/deepseek-v3.1-terminus:exacto",
 		LastAccessed:  time.Now(),
 	}
 }
