@@ -137,6 +137,7 @@ func (a *App) WithSessionLock(next http.HandlerFunc) http.HandlerFunc {
 				Path:     "/",
 				MaxAge:   30 * 24 * 60 * 60,
 				HttpOnly: true,
+				Secure:   true,
 				SameSite: http.SameSiteLaxMode,
 			})
 		}
@@ -197,7 +198,9 @@ func (a *App) renderScenarioSelector(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var customScenarios []models.ScenarioConfig
-	_ = storage.GetJSON("custom_scenarios", &customScenarios)
+	if err := storage.GetJSON("custom_scenarios", &customScenarios); err != nil {
+		slog.Error("failed to load custom scenarios", "error", err)
+	}
 
 	data := map[string]any{
 		"Scenarios":       world.BuiltinScenarios,
@@ -340,7 +343,11 @@ func (a *App) NewCustomGame(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var customScenarios []models.ScenarioConfig
-	_ = storage.GetJSON("custom_scenarios", &customScenarios)
+	if err := storage.GetJSON("custom_scenarios", &customScenarios); err != nil {
+		slog.Error("failed to load custom scenarios", "error", err)
+		http.Error(w, "Failed to load scenarios", http.StatusInternalServerError)
+		return
+	}
 
 	if idx < 0 || idx >= len(customScenarios) {
 		http.Error(w, "Invalid scenario", 400)
@@ -365,6 +372,11 @@ func (a *App) LoadGame(w http.ResponseWriter, r *http.Request) {
 	saveID := r.FormValue("save")
 	if saveID == "" {
 		http.Redirect(w, r, "/", http.StatusSeeOther)
+		return
+	}
+
+	if !validStorageKey(saveID) {
+		http.Error(w, "Invalid save ID", http.StatusBadRequest)
 		return
 	}
 

@@ -51,7 +51,9 @@ func main() {
 	mux.HandleFunc("POST /api/chat/regenerate", app.WithSessionLock(app.RegenerateChat))
 
 	// Storage API (JSON, for compatibility)
-	mux.HandleFunc("/api/storage", app.StorageHandler)
+	mux.HandleFunc("GET /api/storage", app.StorageGet)
+	mux.HandleFunc("POST /api/storage", app.StoragePost)
+	mux.HandleFunc("DELETE /api/storage", app.StorageDelete)
 
 	port := os.Getenv("PORT")
 	if port == "" {

@@ -569,6 +569,16 @@ func (s *SessionState) SetLastSimulationTick(tick int) {
 	s.LastSimulationTick = tick
 }
 
+// GetCurrentTick returns the current tick under a read lock.
+func (s *SessionState) GetCurrentTick() int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.World == nil {
+		return 0
+	}
+	return s.World.Time.Tick
+}
+
 // GetActiveSaveKey returns the active save key under a read lock.
 func (s *SessionState) GetActiveSaveKey() string {
 	s.mu.RLock()

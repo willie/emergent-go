@@ -73,7 +73,15 @@ func Set(key string, value json.RawMessage) error {
 		}
 	}
 
-	return os.WriteFile(path, value, 0644)
+	return atomicWrite(path, value)
+}
+
+func atomicWrite(path string, data []byte) error {
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, data, 0644); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
 }
 
 // Delete removes a value by key
@@ -145,7 +153,7 @@ func SetJSON(key string, value any) error {
 	}
 
 	path := filepath.Join(dataDir, cleanKey(key)+".json")
-	return os.WriteFile(path, data, 0644)
+	return atomicWrite(path, data)
 }
 
 // GetJSON retrieves a JSON value and unmarshals into target

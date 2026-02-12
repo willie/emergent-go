@@ -589,19 +589,22 @@ func (a *App) handleMoveToLocation(ctx context.Context, session *world.SessionSt
 		}
 		session.AdvanceTime(models.TimeCosts["move"], narrativeTime)
 
-		timeSinceLastSim := ws.Time.Tick - session.GetLastSimulationTick()
+		currentTick := session.GetCurrentTick()
+		timeSinceLastSim := currentTick - session.GetLastSimulationTick()
 		if timeSinceLastSim > 5 && previousLocationID != clusterID {
 			session.SetIsSimulating(true)
 			if notify != nil {
 				notify("simulating", "Simulating the world...")
 			}
-			simResult, err := world.SimulateOffscreen(ctx, ws, clusterID, timeSinceLastSim, modelID)
+			// Re-acquire world state after mutations for proper lock discipline
+			simWorld := session.GetWorld()
+			simResult, err := world.SimulateOffscreen(ctx, simWorld, clusterID, timeSinceLastSim, modelID)
 			if err == nil && simResult != nil {
 				for _, event := range simResult.Events {
 					event.SourceMessageID = messageID
 					session.AddEvent(event)
 					for _, witnessID := range event.WitnessedByIDs {
-						session.UpdateCharacterKnowledge(witnessID, event.Description, ws.Time.Tick, "witnessed")
+						session.UpdateCharacterKnowledge(witnessID, event.Description, currentTick, "witnessed")
 					}
 				}
 				for _, conv := range simResult.Conversations {
@@ -611,7 +614,7 @@ func (a *App) handleMoveToLocation(ctx context.Context, session *world.SessionSt
 					session.MoveCharacter(update.CharacterID, update.NewLocationID)
 				}
 			}
-			session.SetLastSimulationTick(ws.Time.Tick)
+			session.SetLastSimulationTick(currentTick)
 			session.SetIsSimulating(false)
 			if notify != nil {
 				notify("simulated", "")

@@ -8,23 +8,6 @@ import (
 	"emergent/internal/storage"
 )
 
-// StorageHandler provides a JSON API for storage (compatible with the JS frontend)
-func (a *App) StorageHandler(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-
-	switch r.Method {
-	case "GET":
-		a.storageGet(w, r)
-	case "POST":
-		a.storagePost(w, r)
-	case "DELETE":
-		a.storageDelete(w, r)
-	default:
-		w.WriteHeader(405)
-		json.NewEncoder(w).Encode(map[string]string{"error": "method not allowed"})
-	}
-}
-
 func validStorageKey(key string) bool {
 	for _, prefix := range []string{"surat-world-storage", "surat-chat-messages", "custom_scenarios"} {
 		if key == prefix || strings.HasPrefix(key, prefix+"-") {
@@ -34,7 +17,9 @@ func validStorageKey(key string) bool {
 	return false
 }
 
-func (a *App) storageGet(w http.ResponseWriter, r *http.Request) {
+// StorageGet handles GET /api/storage
+func (a *App) StorageGet(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
 	key := r.URL.Query().Get("key")
 	list := r.URL.Query().Get("list")
 
@@ -73,7 +58,9 @@ func (a *App) storageGet(w http.ResponseWriter, r *http.Request) {
 	w.Write(data)
 }
 
-func (a *App) storagePost(w http.ResponseWriter, r *http.Request) {
+// StoragePost handles POST /api/storage
+func (a *App) StoragePost(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
 	r.Body = http.MaxBytesReader(w, r.Body, 5<<20)
 
 	var body struct {
@@ -107,7 +94,9 @@ func (a *App) storagePost(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})
 }
 
-func (a *App) storageDelete(w http.ResponseWriter, r *http.Request) {
+// StorageDelete handles DELETE /api/storage
+func (a *App) StorageDelete(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
 	key := r.URL.Query().Get("key")
 	if key == "" {
 		w.WriteHeader(400)
