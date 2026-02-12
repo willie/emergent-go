@@ -1,4 +1,4 @@
-package emergent
+package main
 
 import "embed"
 

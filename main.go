@@ -9,7 +9,6 @@ import (
 	"syscall"
 	"time"
 
-	"emergent"
 	"emergent/internal/ai"
 	"emergent/internal/handlers"
 )
@@ -22,7 +21,7 @@ func main() {
 	ai.Init()
 
 	// Create app
-	app, err := handlers.NewApp(emergent.TemplateFS)
+	app, err := handlers.NewApp(TemplateFS)
 	if err != nil {
 		slog.Error("failed to initialize app", "error", err)
 		os.Exit(1)
