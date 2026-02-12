@@ -296,6 +296,7 @@ func StreamText(ctx context.Context, model string, messages []ChatMessage, tools
 
 		var event StreamEvent
 		if err := json.Unmarshal([]byte(data), &event); err != nil {
+			slog.Debug("skipping unparseable SSE data", "data", data, "error", err)
 			continue
 		}
 

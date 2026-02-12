@@ -32,23 +32,23 @@ func main() {
 	mux := http.NewServeMux()
 
 	// Pages
-	mux.HandleFunc("GET /{$}", app.Index)
-	mux.HandleFunc("POST /game/new", app.NewGame)
-	mux.HandleFunc("POST /game/new-custom", app.NewCustomGame)
-	mux.HandleFunc("POST /game/load", app.LoadGame)
-	mux.HandleFunc("POST /game/exit", app.ExitGame)
+	mux.HandleFunc("GET /{$}", app.WithSessionLock(app.Index))
+	mux.HandleFunc("POST /game/new", app.WithSessionLock(app.NewGame))
+	mux.HandleFunc("POST /game/new-custom", app.WithSessionLock(app.NewCustomGame))
+	mux.HandleFunc("POST /game/load", app.WithSessionLock(app.LoadGame))
+	mux.HandleFunc("POST /game/exit", app.WithSessionLock(app.ExitGame))
 	mux.HandleFunc("POST /scenario/import", app.ImportScenario)
-	mux.HandleFunc("POST /settings/model", app.SetModel)
+	mux.HandleFunc("POST /settings/model", app.WithSessionLock(app.SetModel))
 
 	// HTMX partials
-	mux.HandleFunc("GET /partials/saves", app.PartialSaves)
+	mux.HandleFunc("GET /partials/saves", app.WithSessionLock(app.PartialSaves))
 
 	// API - Chat (returns streamed HTML)
-	mux.HandleFunc("POST /api/chat", app.ChatSend)
-	mux.HandleFunc("POST /api/chat/continue", app.ChatContinue)
-	mux.HandleFunc("POST /api/chat/edit", app.EditMessage)
-	mux.HandleFunc("POST /api/chat/rewind", app.RewindChat)
-	mux.HandleFunc("POST /api/chat/regenerate", app.RegenerateChat)
+	mux.HandleFunc("POST /api/chat", app.WithSessionLock(app.ChatSend))
+	mux.HandleFunc("POST /api/chat/continue", app.WithSessionLock(app.ChatContinue))
+	mux.HandleFunc("POST /api/chat/edit", app.WithSessionLock(app.EditMessage))
+	mux.HandleFunc("POST /api/chat/rewind", app.WithSessionLock(app.RewindChat))
+	mux.HandleFunc("POST /api/chat/regenerate", app.WithSessionLock(app.RegenerateChat))
 
 	// Storage API (JSON, for compatibility)
 	mux.HandleFunc("/api/storage", app.StorageHandler)

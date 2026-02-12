@@ -38,12 +38,6 @@ func writeSSE(w http.ResponseWriter, flusher http.Flusher, event, data string) {
 
 // ChatSend handles a new chat message, returning an SSE stream
 func (a *App) ChatSend(w http.ResponseWriter, r *http.Request) {
-	if sid := a.getSessionID(r); sid != "" {
-		mu := a.getSessionMutex(sid)
-		mu.Lock()
-		defer mu.Unlock()
-	}
-
 	if err := r.ParseForm(); err != nil {
 		http.Error(w, "Bad request", 400)
 		return
@@ -54,7 +48,7 @@ func (a *App) ChatSend(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	session := a.getSession(w, r)
+	session := a.getSession(r)
 	if session.GetWorld() == nil {
 		http.Error(w, "No active game", 400)
 		return
@@ -76,13 +70,7 @@ func (a *App) ChatSend(w http.ResponseWriter, r *http.Request) {
 
 // ChatContinue generates another assistant response
 func (a *App) ChatContinue(w http.ResponseWriter, r *http.Request) {
-	if sid := a.getSessionID(r); sid != "" {
-		mu := a.getSessionMutex(sid)
-		mu.Lock()
-		defer mu.Unlock()
-	}
-
-	session := a.getSession(w, r)
+	session := a.getSession(r)
 	if session.GetWorld() == nil {
 		http.Error(w, "No active game", 400)
 		return
@@ -209,11 +197,6 @@ func (a *App) streamResponse(w http.ResponseWriter, r *http.Request, session *wo
 
 // EditMessage updates a chat message's content
 func (a *App) EditMessage(w http.ResponseWriter, r *http.Request) {
-	if sid := a.getSessionID(r); sid != "" {
-		mu := a.getSessionMutex(sid)
-		mu.Lock()
-		defer mu.Unlock()
-	}
 	if err := r.ParseForm(); err != nil {
 		http.Error(w, "Bad request", 400)
 		return
@@ -225,7 +208,7 @@ func (a *App) EditMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	session := a.getSession(w, r)
+	session := a.getSession(r)
 	if !session.EditChatMessage(msgID, content) {
 		http.Error(w, "Message not found", 404)
 		return
@@ -238,11 +221,6 @@ func (a *App) EditMessage(w http.ResponseWriter, r *http.Request) {
 
 // RewindChat truncates chat history to before a given index
 func (a *App) RewindChat(w http.ResponseWriter, r *http.Request) {
-	if sid := a.getSessionID(r); sid != "" {
-		mu := a.getSessionMutex(sid)
-		mu.Lock()
-		defer mu.Unlock()
-	}
 	if err := r.ParseForm(); err != nil {
 		http.Error(w, "Bad request", 400)
 		return
@@ -254,7 +232,7 @@ func (a *App) RewindChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	session := a.getSession(w, r)
+	session := a.getSession(r)
 	session.TruncateChatMessages(idx)
 	if err := session.Persist(); err != nil {
 		slog.Error("failed to persist after rewind", "error", err)
@@ -264,13 +242,7 @@ func (a *App) RewindChat(w http.ResponseWriter, r *http.Request) {
 
 // RegenerateChat removes the last assistant message and streams a new response
 func (a *App) RegenerateChat(w http.ResponseWriter, r *http.Request) {
-	if sid := a.getSessionID(r); sid != "" {
-		mu := a.getSessionMutex(sid)
-		mu.Lock()
-		defer mu.Unlock()
-	}
-
-	session := a.getSession(w, r)
+	session := a.getSession(r)
 	if session.GetWorld() == nil {
 		http.Error(w, "No active game", 400)
 		return
@@ -609,6 +581,13 @@ func (a *App) handleMoveToLocation(ctx context.Context, session *world.SessionSt
 	if clusterID != "" {
 		session.MoveCharacter(ws.PlayerCharacterID, clusterID)
 
+		// Apply move time cost before checking simulation trigger
+		narrativeTime := ""
+		if args.NarrativeTime != nil {
+			narrativeTime = *args.NarrativeTime
+		}
+		session.AdvanceTime(models.TimeCosts["move"], narrativeTime)
+
 		timeSinceLastSim := ws.Time.Tick - session.GetLastSimulationTick()
 		if timeSinceLastSim > 5 && previousLocationID != clusterID {
 			session.SetIsSimulating(true)
@@ -638,12 +617,6 @@ func (a *App) handleMoveToLocation(ctx context.Context, session *world.SessionSt
 			}
 		}
 	}
-
-	narrativeTime := ""
-	if args.NarrativeTime != nil {
-		narrativeTime = *args.NarrativeTime
-	}
-	session.AdvanceTime(models.TimeCosts["move"], narrativeTime)
 
 	destName := resolved.CanonicalName
 	if destName == "" {

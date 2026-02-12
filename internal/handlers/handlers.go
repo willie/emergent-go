@@ -91,31 +91,16 @@ func NewApp(templateFS fs.FS) (*App, error) {
 }
 
 // getSession retrieves the session for this request, creating one if needed.
-// It reads the session ID from a cookie, looks it up in the map, and creates
-// a fresh session (with cookie) if none exists.
-func (a *App) getSession(w http.ResponseWriter, r *http.Request) *world.SessionState {
-	if cookie, err := r.Cookie(sessionCookieName); err == nil {
-		if val, ok := a.sessions.Load(cookie.Value); ok {
-			session := val.(*world.SessionState)
-			session.Touch()
-			return session
-		}
+// Must be called from a handler wrapped with WithSessionLock.
+func (a *App) getSession(r *http.Request) *world.SessionState {
+	sid := r.Context().Value(sessionIDKey).(string)
+	if val, ok := a.sessions.Load(sid); ok {
+		session := val.(*world.SessionState)
+		session.Touch()
+		return session
 	}
-
-	// Create new session
-	id := uuid.New().String()
 	session := world.NewSessionState()
-
-	http.SetCookie(w, &http.Cookie{
-		Name:     sessionCookieName,
-		Value:    id,
-		Path:     "/",
-		MaxAge:   30 * 24 * 60 * 60, // 30 days
-		HttpOnly: true,
-		SameSite: http.SameSiteLaxMode,
-	})
-
-	a.sessions.Store(id, session)
+	a.sessions.Store(sid, session)
 	return session
 }
 
@@ -129,6 +114,34 @@ func (a *App) getSessionID(r *http.Request) string {
 		return cookie.Value
 	}
 	return ""
+}
+
+type contextKey string
+
+const sessionIDKey contextKey = "sessionID"
+
+// WithSessionLock returns middleware that acquires the session mutex for the
+// duration of the request, creating a session ID and cookie if none exists.
+func (a *App) WithSessionLock(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		sid := a.getSessionID(r)
+		if sid == "" {
+			sid = uuid.New().String()
+			http.SetCookie(w, &http.Cookie{
+				Name:     sessionCookieName,
+				Value:    sid,
+				Path:     "/",
+				MaxAge:   30 * 24 * 60 * 60,
+				HttpOnly: true,
+				SameSite: http.SameSiteLaxMode,
+			})
+		}
+		mu := a.getSessionMutex(sid)
+		mu.Lock()
+		defer mu.Unlock()
+		ctx := context.WithValue(r.Context(), sessionIDKey, sid)
+		next(w, r.WithContext(ctx))
+	}
 }
 
 // compilePageTemplate parses layout + a specific page template + partials into one set
@@ -148,12 +161,7 @@ func compilePageTemplate(templateFS fs.FS, funcMap template.FuncMap, page string
 
 // Index serves the main page
 func (a *App) Index(w http.ResponseWriter, r *http.Request) {
-	if sid := a.getSessionID(r); sid != "" {
-		mu := a.getSessionMutex(sid)
-		mu.Lock()
-		defer mu.Unlock()
-	}
-	session := a.getSession(w, r)
+	session := a.getSession(r)
 	if session.GetWorld() == nil {
 		a.renderScenarioSelector(w, r)
 		return
@@ -290,11 +298,6 @@ func (a *App) renderGame(w http.ResponseWriter, r *http.Request, session *world.
 
 // NewGame starts a new game with a built-in scenario
 func (a *App) NewGame(w http.ResponseWriter, r *http.Request) {
-	if sid := a.getSessionID(r); sid != "" {
-		mu := a.getSessionMutex(sid)
-		mu.Lock()
-		defer mu.Unlock()
-	}
 	if err := r.ParseForm(); err != nil {
 		http.Error(w, "Bad request", 400)
 		return
@@ -306,7 +309,7 @@ func (a *App) NewGame(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	session := a.getSession(w, r)
+	session := a.getSession(r)
 	scenario := world.BuiltinScenarios[idx]
 	saveKey := fmt.Sprintf("surat-world-storage-game-%d", uuid.New().ID())
 	session.SetActiveSaveKey(saveKey)
@@ -321,11 +324,6 @@ func (a *App) NewGame(w http.ResponseWriter, r *http.Request) {
 
 // NewCustomGame starts a game with a custom scenario
 func (a *App) NewCustomGame(w http.ResponseWriter, r *http.Request) {
-	if sid := a.getSessionID(r); sid != "" {
-		mu := a.getSessionMutex(sid)
-		mu.Lock()
-		defer mu.Unlock()
-	}
 	if err := r.ParseForm(); err != nil {
 		http.Error(w, "Bad request", 400)
 		return
@@ -345,7 +343,7 @@ func (a *App) NewCustomGame(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	session := a.getSession(w, r)
+	session := a.getSession(r)
 	scenario := customScenarios[idx]
 	saveKey := fmt.Sprintf("surat-world-storage-game-%d", uuid.New().ID())
 	session.SetActiveSaveKey(saveKey)
@@ -360,18 +358,13 @@ func (a *App) NewCustomGame(w http.ResponseWriter, r *http.Request) {
 
 // LoadGame loads an existing save
 func (a *App) LoadGame(w http.ResponseWriter, r *http.Request) {
-	if sid := a.getSessionID(r); sid != "" {
-		mu := a.getSessionMutex(sid)
-		mu.Lock()
-		defer mu.Unlock()
-	}
 	saveID := r.FormValue("save")
 	if saveID == "" {
 		http.Redirect(w, r, "/", http.StatusSeeOther)
 		return
 	}
 
-	session := a.getSession(w, r)
+	session := a.getSession(r)
 	if err := session.Load(saveID); err != nil {
 		slog.Error("failed to load save", "save", saveID, "error", err)
 		http.Error(w, "Failed to load save", http.StatusInternalServerError)
@@ -383,12 +376,7 @@ func (a *App) LoadGame(w http.ResponseWriter, r *http.Request) {
 
 // ExitGame exits to the main menu
 func (a *App) ExitGame(w http.ResponseWriter, r *http.Request) {
-	if sid := a.getSessionID(r); sid != "" {
-		mu := a.getSessionMutex(sid)
-		mu.Lock()
-		defer mu.Unlock()
-	}
-	session := a.getSession(w, r)
+	session := a.getSession(r)
 	_ = session.Persist()
 	session.ResetWorld()
 	http.Redirect(w, r, "/", http.StatusSeeOther)
@@ -434,16 +422,11 @@ func (a *App) ImportScenario(w http.ResponseWriter, r *http.Request) {
 
 // SetModel updates the AI model
 func (a *App) SetModel(w http.ResponseWriter, r *http.Request) {
-	if sid := a.getSessionID(r); sid != "" {
-		mu := a.getSessionMutex(sid)
-		mu.Lock()
-		defer mu.Unlock()
-	}
 	if err := r.ParseForm(); err != nil {
 		http.Error(w, "Bad request", 400)
 		return
 	}
-	session := a.getSession(w, r)
+	session := a.getSession(r)
 	model := r.FormValue("model")
 	if model != "" {
 		if !slices.Contains(ai.AvailableModels, model) {
@@ -457,12 +440,7 @@ func (a *App) SetModel(w http.ResponseWriter, r *http.Request) {
 
 // PartialSaves returns the saves list as HTML partial
 func (a *App) PartialSaves(w http.ResponseWriter, r *http.Request) {
-	if sid := a.getSessionID(r); sid != "" {
-		mu := a.getSessionMutex(sid)
-		mu.Lock()
-		defer mu.Unlock()
-	}
-	session := a.getSession(w, r)
+	session := a.getSession(r)
 	saves, _ := storage.List()
 	w.Header().Set("Content-Type", "text/html")
 
