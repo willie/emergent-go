@@ -70,8 +70,7 @@
                         </div>
                         <div class="max-w-[80%] rounded-lg px-4 py-2 bg-blue-600 text-white">
                             <div class="prose prose-invert max-w-none break-words whitespace-pre-wrap" id="msg-content-{{$m.ID}}">{{$m.Content}}</div>
-                            <form id="edit-form-{{$m.ID}}" class="hidden" method="POST" action="/api/chat/edit">
-                                <input type="hidden" name="message_id" value="{{$m.ID}}">
+                            <form id="edit-form-{{$m.ID}}" class="hidden" onsubmit="submitEditMessage(event, '{{$m.ID}}'); return false">
                                 <textarea name="content" class="w-full bg-blue-900/50 text-white p-2 rounded border border-blue-400/30 focus:outline-none focus:border-blue-400 resize-y min-h-[60px] text-sm mt-1"></textarea>
                                 <div class="flex justify-end gap-2 mt-1">
                                     <button type="button" onclick="cancelEditMessage('{{$m.ID}}')" class="px-2 py-1 text-xs text-blue-200 hover:text-white">Cancel</button>
@@ -211,8 +210,8 @@
     </div>
 </div>
 <script>
-    // Initial scroll — wait for layout to complete
-    requestAnimationFrame(function() { requestAnimationFrame(scrollChat); });
+    // Initial scroll — wait for all resources (including Tailwind CDN) to load
+    window.addEventListener('load', scrollChat);
 </script>
 {{end}}
 

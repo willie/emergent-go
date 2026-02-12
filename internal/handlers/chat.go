@@ -107,8 +107,7 @@ func (a *App) streamResponse(w http.ResponseWriter, r *http.Request, session *wo
 				`</div>`+
 				`<div class="max-w-[80%%] rounded-lg px-4 py-2 bg-blue-600 text-white">`+
 				`<div class="prose prose-invert max-w-none break-words whitespace-pre-wrap" id="msg-content-%s">%s</div>`+
-				`<form id="edit-form-%s" class="hidden" method="POST" action="/api/chat/edit">`+
-				`<input type="hidden" name="message_id" value="%s">`+
+				`<form id="edit-form-%s" class="hidden" onsubmit="submitEditMessage(event, '%s'); return false">`+
 				`<textarea name="content" class="w-full bg-blue-900/50 text-white p-2 rounded border border-blue-400/30 focus:outline-none focus:border-blue-400 resize-y min-h-[60px] text-sm mt-1"></textarea>`+
 				`<div class="flex justify-end gap-2 mt-1">`+
 				`<button type="button" onclick="cancelEditMessage('%s')" class="px-2 py-1 text-xs text-blue-200 hover:text-white">Cancel</button>`+
@@ -210,10 +209,6 @@ func (a *App) streamResponse(w http.ResponseWriter, r *http.Request, session *wo
 
 // EditMessage updates a chat message's content
 func (a *App) EditMessage(w http.ResponseWriter, r *http.Request) {
-	if err := r.ParseForm(); err != nil {
-		http.Error(w, "Bad request", 400)
-		return
-	}
 	msgID := r.FormValue("message_id")
 	content := r.FormValue("content")
 	if msgID == "" || content == "" {
@@ -229,15 +224,11 @@ func (a *App) EditMessage(w http.ResponseWriter, r *http.Request) {
 	if err := session.Persist(); err != nil {
 		slog.Error("failed to persist after edit", "error", err)
 	}
-	http.Redirect(w, r, "/", http.StatusSeeOther)
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // RewindChat truncates chat history to before a given index
 func (a *App) RewindChat(w http.ResponseWriter, r *http.Request) {
-	if err := r.ParseForm(); err != nil {
-		http.Error(w, "Bad request", 400)
-		return
-	}
 	idxStr := r.FormValue("index")
 	idx, err := strconv.Atoi(idxStr)
 	if err != nil || idx < 0 {
@@ -250,7 +241,7 @@ func (a *App) RewindChat(w http.ResponseWriter, r *http.Request) {
 	if err := session.Persist(); err != nil {
 		slog.Error("failed to persist after rewind", "error", err)
 	}
-	http.Redirect(w, r, "/", http.StatusSeeOther)
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // RegenerateChat removes the last assistant message and streams a new response

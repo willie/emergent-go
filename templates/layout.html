@@ -322,6 +322,23 @@
             form.classList.remove('hidden');
         }
 
+        function submitEditMessage(event, msgId) {
+            event.preventDefault();
+            var content = document.getElementById('msg-content-' + msgId);
+            var form = document.getElementById('edit-form-' + msgId);
+            var newContent = form.querySelector('textarea').value;
+            var formData = new FormData();
+            formData.append('message_id', msgId);
+            formData.append('content', newContent);
+            fetch('/api/chat/edit', { method: 'POST', body: formData }).then(function() {
+                if (content) {
+                    content.textContent = newContent;
+                    content.classList.remove('hidden');
+                }
+                if (form) form.classList.add('hidden');
+            });
+        }
+
         function cancelEditMessage(msgId) {
             var content = document.getElementById('msg-content-' + msgId);
             var form = document.getElementById('edit-form-' + msgId);
@@ -331,16 +348,15 @@
 
         function rewindToMessage(index) {
             if (!confirm('Remove this message and everything after it?')) return;
-            var form = document.createElement('form');
-            form.method = 'POST';
-            form.action = '/api/chat/rewind';
-            var input = document.createElement('input');
-            input.type = 'hidden';
-            input.name = 'index';
-            input.value = index;
-            form.appendChild(input);
-            document.body.appendChild(form);
-            form.submit();
+            var formData = new FormData();
+            formData.append('index', index);
+            fetch('/api/chat/rewind', { method: 'POST', body: formData }).then(function() {
+                // Remove this message and everything after it from DOM
+                var allMsgs = document.querySelectorAll('#chat-messages [data-msg-index]');
+                for (var i = index; i < allMsgs.length; i++) {
+                    allMsgs[i].remove();
+                }
+            });
         }
 
         function rewindToMessageByEl(btn) {
