@@ -211,8 +211,8 @@
     </div>
 </div>
 <script>
-    // Initial scroll
-    scrollChat();
+    // Initial scroll — wait for layout to complete
+    requestAnimationFrame(function() { requestAnimationFrame(scrollChat); });
 </script>
 {{end}}
 

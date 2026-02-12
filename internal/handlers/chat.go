@@ -93,17 +93,36 @@ func (a *App) streamResponse(w http.ResponseWriter, r *http.Request, session *wo
 
 	// Send user message bubble if present
 	if userMsg != nil {
+		escaped := html.EscapeString(userMsg.Content)
 		userHTML := fmt.Sprintf(
-			`<div class="flex justify-end"><div class="max-w-[80%%] rounded-lg px-4 py-2 bg-blue-600 text-white"><div class="prose prose-invert max-w-none break-words whitespace-pre-wrap">%s</div></div></div>`,
-			html.EscapeString(userMsg.Content))
+			`<div class="group/msg flex justify-end" data-msg-index="stream">`+
+				`<div class="flex items-start gap-1">`+
+				`<div class="opacity-0 group-hover/msg:opacity-100 transition-opacity flex items-center gap-1 pt-2">`+
+				`<button onclick="startEditMessage('%s', this)" class="text-zinc-600 hover:text-zinc-300 p-1" title="Edit">`+
+				`<svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L10.582 16.07a4.5 4.5 0 0 1-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 0 1 1.13-1.897l8.932-8.931z"/></svg>`+
+				`</button>`+
+				`<button onclick="rewindToMessageByEl(this)" class="text-zinc-600 hover:text-zinc-300 p-1" title="Rewind here">`+
+				`<svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 15 3 9m0 0 6-6M3 9h12a6 6 0 0 1 0 12h-3"/></svg>`+
+				`</button>`+
+				`</div>`+
+				`<div class="max-w-[80%%] rounded-lg px-4 py-2 bg-blue-600 text-white">`+
+				`<div class="prose prose-invert max-w-none break-words whitespace-pre-wrap" id="msg-content-%s">%s</div>`+
+				`<form id="edit-form-%s" class="hidden" method="POST" action="/api/chat/edit">`+
+				`<input type="hidden" name="message_id" value="%s">`+
+				`<textarea name="content" class="w-full bg-blue-900/50 text-white p-2 rounded border border-blue-400/30 focus:outline-none focus:border-blue-400 resize-y min-h-[60px] text-sm mt-1"></textarea>`+
+				`<div class="flex justify-end gap-2 mt-1">`+
+				`<button type="button" onclick="cancelEditMessage('%s')" class="px-2 py-1 text-xs text-blue-200 hover:text-white">Cancel</button>`+
+				`<button type="submit" class="px-2 py-1 text-xs bg-blue-500 hover:bg-blue-400 text-white rounded">Save</button>`+
+				`</div></form></div></div></div>`,
+			userMsg.ID, userMsg.ID, escaped, userMsg.ID, userMsg.ID, userMsg.ID)
 		writeSSE(w, flusher, "user-message", userHTML)
 	}
 
 	// Build AI messages
 	chatMessages := session.GetChatMessagesCopy()
-	aiMessages := a.buildAIMessages(chatMessages)
 	ws := session.GetWorld()
 	systemPrompt := buildSystemPrompt(ws)
+	aiMessages := a.buildAIMessages(systemPrompt, chatMessages)
 	tools := buildChatTools(ws)
 
 	fullMessages := append([]ai.ChatMessage{
@@ -299,9 +318,43 @@ func (a *App) renderPartial(name string, data any) string {
 	return buf.String()
 }
 
-func (a *App) buildAIMessages(chatMessages []models.ChatMessage) []ai.ChatMessage {
-	var messages []ai.ChatMessage
-	for _, msg := range chatMessages {
+// estimateTokens returns a rough token count (~4 chars per token).
+func estimateTokens(s string) int {
+	n := len(s) / 4
+	if n == 0 && len(s) > 0 {
+		return 1
+	}
+	return n
+}
+
+// maxMessageTokens is the budget for system prompt + chat history.
+// Conservative: fits all available models (smallest is 128K) with room
+// for tools JSON (~1K) and the response (~4K).
+const maxMessageTokens = 100_000
+
+func (a *App) buildAIMessages(systemPrompt string, chatMessages []models.ChatMessage) []ai.ChatMessage {
+	budgetRemaining := maxMessageTokens - estimateTokens(systemPrompt)
+	if budgetRemaining < 0 {
+		budgetRemaining = 0
+	}
+
+	// Walk backwards to keep the most recent messages
+	start := len(chatMessages)
+	for i := len(chatMessages) - 1; i >= 0; i-- {
+		cost := estimateTokens(chatMessages[i].Content)
+		if cost > budgetRemaining {
+			break
+		}
+		budgetRemaining -= cost
+		start = i
+	}
+
+	if start > 0 {
+		slog.Info("trimmed chat context", "dropped", start, "kept", len(chatMessages)-start)
+	}
+
+	messages := make([]ai.ChatMessage, 0, len(chatMessages)-start)
+	for _, msg := range chatMessages[start:] {
 		messages = append(messages, ai.ChatMessage{
 			Role:    msg.Role,
 			Content: msg.Content,
