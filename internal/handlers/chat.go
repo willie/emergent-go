@@ -190,6 +190,7 @@ func (a *App) streamResponse(w http.ResponseWriter, r *http.Request, session *wo
 	// Persist state
 	if err := session.Persist(); err != nil {
 		slog.Error("failed to persist state", "error", err)
+		writeSSE(w, flusher, "error", "Warning: failed to save state. Your progress may be lost.")
 	}
 
 	writeSSE(w, flusher, "done", "")

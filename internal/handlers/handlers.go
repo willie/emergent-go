@@ -9,6 +9,7 @@ import (
 	"io/fs"
 	"log/slog"
 	"net/http"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -24,6 +25,9 @@ import (
 	"github.com/yuin/goldmark"
 	goldmarkhtml "github.com/yuin/goldmark/renderer/html"
 )
+
+// unsafeHrefRe matches href/src attributes with dangerous URL schemes in goldmark output.
+var unsafeHrefRe = regexp.MustCompile(`(?i)(href|src)="(?:javascript|vbscript|data):[^"]*"`)
 
 const sessionCookieName = "emergent_session"
 
@@ -69,7 +73,7 @@ func NewApp(templateFS fs.FS) (*App, error) {
 			if err := md.Convert([]byte(s), &buf); err != nil {
 				return template.HTML(template.HTMLEscapeString(s))
 			}
-			return template.HTML(buf.String())
+			return template.HTML(unsafeHrefRe.ReplaceAllString(buf.String(), `$1="#"`))
 		},
 	}
 

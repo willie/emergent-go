@@ -21,12 +21,20 @@
         // Configure marked for markdown rendering
         if (typeof marked !== 'undefined') {
             marked.setOptions({ breaks: true });
-            marked.use({ renderer: {
-                html: function(token) {
-                    var t = (typeof token === 'string') ? token : (token.raw || token.text || '');
-                    return t.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+            marked.use({
+                renderer: {
+                    html: function(token) {
+                        var t = (typeof token === 'string') ? token : (token.raw || token.text || '');
+                        return t.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+                    }
+                },
+                walkTokens: function(token) {
+                    if ((token.type === 'link' || token.type === 'image') &&
+                        /^\s*(javascript|vbscript|data):/i.test(token.href)) {
+                        token.href = '#';
+                    }
                 }
-            }});
+            });
         }
 
         // Auto-scroll chat to bottom

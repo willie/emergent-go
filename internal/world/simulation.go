@@ -332,11 +332,22 @@ If any character EXPLICITLY decides to leave for another location, report it in 
 		}
 
 		var locID string
+		// Prefer exact match
 		for _, l := range world.LocationClusters {
-			if strings.Contains(strings.ToLower(l.CanonicalName), strings.ToLower(move.Destination)) ||
-				strings.Contains(strings.ToLower(move.Destination), strings.ToLower(l.CanonicalName)) {
+			if strings.EqualFold(l.CanonicalName, move.Destination) {
 				locID = l.ID
 				break
+			}
+		}
+		// Fall back to substring match
+		if locID == "" {
+			destLower := strings.ToLower(move.Destination)
+			for _, l := range world.LocationClusters {
+				nameLower := strings.ToLower(l.CanonicalName)
+				if strings.Contains(nameLower, destLower) || strings.Contains(destLower, nameLower) {
+					locID = l.ID
+					break
+				}
 			}
 		}
 		if locID == "" {
