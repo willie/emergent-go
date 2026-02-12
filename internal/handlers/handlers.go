@@ -30,6 +30,7 @@ import (
 var unsafeHrefRe = regexp.MustCompile(`(?i)(href|src)="(?:javascript|vbscript|data):[^"]*"`)
 
 const sessionCookieName = "emergent_session"
+const saveKeyCookieName = "emergent_save_key"
 
 // App holds the application state and dependencies
 type App struct {
@@ -104,6 +105,12 @@ func (a *App) getSession(r *http.Request) *world.SessionState {
 		return session
 	}
 	session := world.NewSessionState()
+	// Restore from save key cookie if the server restarted
+	if cookie, err := r.Cookie(saveKeyCookieName); err == nil && cookie.Value != "" {
+		if err := session.Load(cookie.Value); err != nil {
+			slog.Warn("failed to restore session from cookie", "save_key", cookie.Value, "error", err)
+		}
+	}
 	a.sessions.Store(sid, session)
 	return session
 }
@@ -289,9 +296,32 @@ func (a *App) buildGameData(session *world.SessionState) gameData {
 		OffscreenConversations: offscreenConvs,
 		DiscoveredCharacters:   session.GetDiscoveredCharacters(),
 		AvailableModels:        ai.AvailableModels,
-		ModelID:                session.GetModelID(),
+		ModelID:                effectiveModelID(session.GetModelID()),
 		IsSimulating:           session.GetIsSimulating(),
 	}
+}
+
+func setSaveKeyCookie(w http.ResponseWriter, r *http.Request, key string) {
+	maxAge := 30 * 24 * 60 * 60
+	if key == "" {
+		maxAge = -1
+	}
+	http.SetCookie(w, &http.Cookie{
+		Name:     saveKeyCookieName,
+		Value:    key,
+		Path:     "/",
+		MaxAge:   maxAge,
+		HttpOnly: true,
+		Secure:   r.TLS != nil,
+		SameSite: http.SameSiteLaxMode,
+	})
+}
+
+func effectiveModelID(id string) string {
+	if id == "" {
+		return ai.Models.MainConversation
+	}
+	return id
 }
 
 func (a *App) renderGame(w http.ResponseWriter, r *http.Request, session *world.SessionState) {
@@ -320,6 +350,7 @@ func (a *App) NewGame(w http.ResponseWriter, r *http.Request) {
 	scenario := world.BuiltinScenarios[idx]
 	saveKey := fmt.Sprintf("surat-world-storage-game-%d", uuid.New().ID())
 	session.SetActiveSaveKey(saveKey)
+	setSaveKeyCookie(w, r, saveKey)
 
 	if err := session.InitializeScenario(scenario); err != nil {
 		http.Error(w, "Failed to initialize: "+err.Error(), 500)
@@ -358,6 +389,7 @@ func (a *App) NewCustomGame(w http.ResponseWriter, r *http.Request) {
 	scenario := customScenarios[idx]
 	saveKey := fmt.Sprintf("surat-world-storage-game-%d", uuid.New().ID())
 	session.SetActiveSaveKey(saveKey)
+	setSaveKeyCookie(w, r, saveKey)
 
 	if err := session.InitializeScenario(scenario); err != nil {
 		http.Error(w, "Failed to initialize: "+err.Error(), 500)
@@ -386,6 +418,7 @@ func (a *App) LoadGame(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Failed to load save", http.StatusInternalServerError)
 		return
 	}
+	setSaveKeyCookie(w, r, saveID)
 
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
@@ -395,6 +428,7 @@ func (a *App) ExitGame(w http.ResponseWriter, r *http.Request) {
 	session := a.getSession(r)
 	_ = session.Persist()
 	session.ResetWorld()
+	setSaveKeyCookie(w, r, "")
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 

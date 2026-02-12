@@ -38,10 +38,6 @@ func writeSSE(w http.ResponseWriter, flusher http.Flusher, event, data string) {
 
 // ChatSend handles a new chat message, returning an SSE stream
 func (a *App) ChatSend(w http.ResponseWriter, r *http.Request) {
-	if err := r.ParseForm(); err != nil {
-		http.Error(w, "Bad request", 400)
-		return
-	}
 	message := strings.TrimSpace(r.FormValue("message"))
 	if message == "" {
 		http.Error(w, "Empty message", 400)
@@ -114,10 +110,7 @@ func (a *App) streamResponse(w http.ResponseWriter, r *http.Request, session *wo
 		{Role: "system", Content: systemPrompt},
 	}, aiMessages...)
 
-	model := session.GetModelID()
-	if model == "" {
-		model = ai.Models.MainConversation
-	}
+	model := effectiveModelID(session.GetModelID())
 
 	const maxToolSteps = 5
 	var finalContent strings.Builder
