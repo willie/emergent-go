@@ -137,7 +137,7 @@ func (a *App) WithSessionLock(next http.HandlerFunc) http.HandlerFunc {
 				Path:     "/",
 				MaxAge:   30 * 24 * 60 * 60,
 				HttpOnly: true,
-				Secure:   true,
+				Secure:   r.TLS != nil,
 				SameSite: http.SameSiteLaxMode,
 			})
 		}
