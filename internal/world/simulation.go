@@ -119,10 +119,7 @@ func runFullSimulation(ctx context.Context, characters []models.Character, locat
 		names = append(names, c.Name)
 	}
 	characterNames := strings.Join(names, " and ")
-	turnCount := min(timeElapsed/2, 8)
-	if turnCount < 1 {
-		turnCount = 1
-	}
+	turnCount := max(min(timeElapsed/2, 8), 1)
 
 	var locNames []string
 	for _, l := range world.LocationClusters {
