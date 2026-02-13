@@ -70,13 +70,16 @@
                         </div>
                         <div class="max-w-[80%] rounded-lg px-4 py-2 bg-blue-600 text-white">
                             <div class="prose prose-invert max-w-none break-words whitespace-pre-wrap" id="msg-content-{{$m.ID}}">{{$m.Content}}</div>
-                            <form id="edit-form-{{$m.ID}}" class="hidden" onsubmit="submitEditMessage(event, '{{$m.ID}}'); return false">
-                                <textarea name="content" class="w-full bg-blue-900/50 text-white p-2 rounded border border-blue-400/30 focus:outline-none focus:border-blue-400 resize-y min-h-[60px] text-sm mt-1"></textarea>
-                                <div class="flex justify-end gap-2 mt-1">
-                                    <button type="button" onclick="cancelEditMessage('{{$m.ID}}')" class="px-2 py-1 text-xs text-blue-200 hover:text-white">Cancel</button>
-                                    <button type="submit" class="px-2 py-1 text-xs bg-blue-500 hover:bg-blue-400 text-white rounded">Save</button>
+                        </div>
+                        <div id="edit-form-{{$m.ID}}" class="hidden max-w-[80%] w-full">
+                            <form onsubmit="submitEditMessage(event, '{{$m.ID}}'); return false" class="rounded-lg border border-blue-400/40 bg-zinc-900 overflow-hidden">
+                                <textarea name="content" class="w-full bg-transparent text-white p-3 focus:outline-none resize-none text-sm" rows="3" onkeydown="handleEditKeys(event, '{{$m.ID}}')" oninput="autoResizeTextarea(this)"></textarea>
+                                <div class="flex justify-end gap-2 px-3 py-2 bg-zinc-800/50 border-t border-zinc-700/50">
+                                    <button type="button" onclick="cancelEditMessage('{{$m.ID}}')" class="px-3 py-1.5 text-sm text-zinc-400 hover:text-white rounded hover:bg-zinc-700 transition-colors">Cancel</button>
+                                    <button type="submit" class="px-3 py-1.5 text-sm bg-blue-600 hover:bg-blue-500 text-white rounded transition-colors">Save &amp; Submit</button>
                                 </div>
                             </form>
+                            <p class="text-[10px] text-zinc-600 mt-1 text-right">Esc to cancel · ⌘Enter to save</p>
                         </div>
                     </div>
                     {{else}}

@@ -313,17 +313,39 @@
 
         // Message actions: edit, rewind, regenerate
 
+        function autoResizeTextarea(el) {
+            el.style.height = 'auto';
+            el.style.height = el.scrollHeight + 'px';
+        }
+
+        function handleEditKeys(event, msgId) {
+            if (event.key === 'Escape') {
+                event.preventDefault();
+                cancelEditMessage(msgId);
+            } else if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
+                event.preventDefault();
+                submitEditMessage(event, msgId);
+            }
+        }
+
         function startEditMessage(msgId, btn) {
             var content = document.getElementById('msg-content-' + msgId);
             var form = document.getElementById('edit-form-' + msgId);
             if (!content || !form) return;
-            form.querySelector('textarea').value = content.textContent;
-            content.classList.add('hidden');
+            var textarea = form.querySelector('textarea');
+            textarea.value = content.textContent;
+            content.parentElement.classList.add('hidden');
             form.classList.remove('hidden');
+            // Auto-resize then focus at end
+            requestAnimationFrame(function() {
+                autoResizeTextarea(textarea);
+                textarea.focus();
+                textarea.selectionStart = textarea.selectionEnd = textarea.value.length;
+            });
         }
 
         function submitEditMessage(event, msgId) {
-            event.preventDefault();
+            if (event && event.preventDefault) event.preventDefault();
             var content = document.getElementById('msg-content-' + msgId);
             var form = document.getElementById('edit-form-' + msgId);
             var newContent = form.querySelector('textarea').value;
@@ -333,7 +355,7 @@
             fetch('/api/chat/edit', { method: 'POST', body: formData }).then(function() {
                 if (content) {
                     content.textContent = newContent;
-                    content.classList.remove('hidden');
+                    content.parentElement.classList.remove('hidden');
                 }
                 if (form) form.classList.add('hidden');
             });
@@ -342,7 +364,7 @@
         function cancelEditMessage(msgId) {
             var content = document.getElementById('msg-content-' + msgId);
             var form = document.getElementById('edit-form-' + msgId);
-            if (content) content.classList.remove('hidden');
+            if (content) content.parentElement.classList.remove('hidden');
             if (form) form.classList.add('hidden');
         }
 
