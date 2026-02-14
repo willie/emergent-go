@@ -344,6 +344,23 @@ func (s *SessionState) GetCharactersAtPlayerLocation() []models.Character {
 	return result
 }
 
+// GetAllCharactersAtLocation returns all non-player characters at a given location,
+// regardless of discovery status.
+func (s *SessionState) GetAllCharactersAtLocation(locationID string) []models.Character {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.World == nil {
+		return nil
+	}
+	var result []models.Character
+	for _, c := range s.World.Characters {
+		if !c.IsPlayer && c.CurrentLocationClusterID == locationID {
+			result = append(result, c)
+		}
+	}
+	return result
+}
+
 // GetDiscoveredCharacters returns all discovered non-player characters
 func (s *SessionState) GetDiscoveredCharacters() []models.Character {
 	s.mu.RLock()

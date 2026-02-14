@@ -134,6 +134,7 @@ type ChatRequest struct {
 	Messages   []ChatMessage `json:"messages"`
 	Tools      []Tool        `json:"tools,omitempty"`
 	ToolChoice any           `json:"tool_choice,omitempty"`
+	MaxTokens  int           `json:"max_tokens,omitempty"`
 	Stream     bool          `json:"stream"`
 }
 
@@ -180,6 +181,7 @@ func GenerateText(ctx context.Context, model string, messages []ChatMessage, too
 		Messages:   messages,
 		Tools:      tools,
 		ToolChoice: toolChoice,
+		MaxTokens:  4096,
 		Stream:     false,
 	}
 
@@ -243,10 +245,11 @@ func StreamText(ctx context.Context, model string, messages []ChatMessage, tools
 	}
 
 	req := ChatRequest{
-		Model:    model,
-		Messages: messages,
-		Tools:    tools,
-		Stream:   true,
+		Model:     model,
+		Messages:  messages,
+		Tools:     tools,
+		MaxTokens: 2048,
+		Stream:    true,
 	}
 
 	body, err := json.Marshal(req)

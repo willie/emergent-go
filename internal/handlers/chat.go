@@ -152,6 +152,7 @@ func (a *App) streamResponse(w http.ResponseWriter, r *http.Request, session *wo
 
 		finalContent.WriteString(result.Content)
 
+		slog.Info("stream result", "step", step, "toolCalls", len(result.ToolCalls), "contentLen", len(result.Content))
 		if len(result.ToolCalls) == 0 {
 			break
 		}
@@ -194,11 +195,31 @@ func (a *App) streamResponse(w http.ResponseWriter, r *http.Request, session *wo
 		fullMessages[0] = ai.ChatMessage{Role: "system", Content: systemPrompt}
 	}
 
+	// Auto-discover characters mentioned in the response but not yet discovered
+	responseText := finalContent.String()
+	ws = session.GetWorld()
+	if ws != nil {
+		changed := false
+		for _, c := range ws.Characters {
+			if !c.IsPlayer && !c.IsDiscovered && strings.Contains(responseText, c.Name) {
+				slog.Info("auto-discovering character mentioned in response", "name", c.Name)
+				session.DiscoverCharacter(c.ID)
+				changed = true
+			}
+		}
+		if changed {
+			oobHTML := a.renderOOBUpdates(session)
+			if oobHTML != "" {
+				writeSSE(w, flusher, "oob", oobHTML)
+			}
+		}
+	}
+
 	// Save assistant message
 	assistantMsg := models.ChatMessage{
 		ID:      uuid.New().String(),
 		Role:    "assistant",
-		Content: finalContent.String(),
+		Content: responseText,
 	}
 	session.AddChatMessage(assistantMsg)
 
@@ -458,7 +479,7 @@ YOUR ROLE:
 - Characters should only know what they have witnessed or been told
 - When the player moves to a new location, describe it vividly
 - Include sensory details and atmosphere
-- Keep responses focused and not overly long
+- Keep responses to 2-4 paragraphs. Be vivid but concise
 - Characters can suggest actions but never force the player
 
 Tools:
@@ -466,18 +487,21 @@ Tools:
 - Use advanceTime when significant time passes (long conversations, waiting, etc.)
 - Use discoverCharacter when introducing ANY new character (hidden or improvised)
 
+CRITICAL RULE — DISCOVERING CHARACTERS:
+- When moveToLocation returns characters marked "Undiscovered", you MUST call discoverCharacter for EACH ONE before writing any narrative. No exceptions.
+- If you introduce, describe, or mention any character not in CHARACTERS PRESENT above, you MUST call discoverCharacter first.
+- Check recent history: if a character has been speaking but is NOT in CHARACTERS PRESENT, call discoverCharacter immediately.
+- You can call multiple tools in a single turn (e.g. discovering two characters at once).
+
 IMPORTANT:
 - Stay in character as the narrator
 - Never break the fourth wall
 - Don't explain game mechanics
 - Let the player drive the story
-- If you introduce or mention any character (whether from the "HIDDEN" list or a new one you create), you MUST call the discoverCharacter tool for them. Do not just describe them; use the tool to make them official.
-- Check the recent history: if a character has been speaking or present but is NOT in the "CHARACTERS PRESENT" list above, call discoverCharacter for them immediately!
-- You can call multiple tools in a single turn if needed (e.g. discovering two characters).
 
 EXAMPLES:
+- Player asks to go to the market → call moveToLocation → result lists "Bran (Undiscovered - YOU MUST CALL discoverCharacter)" → call discoverCharacter for Bran → THEN write your narrative
 - Player walks into a tavern with two unknown people → call discoverCharacter for each one AND write your narrative
-- Player asks to go to the market → call moveToLocation with the destination, then narrate the arrival
 - A long conversation happens → call advanceTime to reflect the passage of time`,
 		ws.Scenario.Title, ws.Scenario.Description,
 		locationName, otherLocStr,
@@ -500,11 +524,16 @@ func buildChatTools(ws *models.WorldState) []ai.Tool {
 							"description": "Brief description of where they are going",
 						},
 						"narrativeTime": map[string]any{
-							"type":        []string{"string", "null"},
-							"description": "New narrative time if significant time passes",
+							"type":        "string",
+							"description": "New narrative time. Pass empty string if unchanged.",
+						},
+						"accompaniedBy": map[string]any{
+							"type":        "array",
+							"items":       map[string]any{"type": "string"},
+							"description": "List of character names moving WITH the player. Pass empty array [] if none.",
 						},
 					},
-					"required": []string{"destination"},
+					"required": []string{"destination", "narrativeTime", "accompaniedBy"},
 				},
 			},
 		},
@@ -522,10 +551,10 @@ func buildChatTools(ws *models.WorldState) []ai.Tool {
 						},
 						"ticks": map[string]any{
 							"type":        "number",
-							"description": "How many time units pass (default: 5)",
+							"description": "How many time units pass. Default to 5.",
 						},
 					},
-					"required": []string{"narrativeTime"},
+					"required": []string{"narrativeTime", "ticks"},
 				},
 			},
 		},
@@ -547,10 +576,10 @@ func buildChatTools(ws *models.WorldState) []ai.Tool {
 						},
 						"goals": map[string]any{
 							"type":        "string",
-							"description": "Inferred or stated goals of the character",
+							"description": "Inferred or stated goals. Pass empty string if unknown.",
 						},
 					},
-					"required": []string{"characterName", "introduction"},
+					"required": []string{"characterName", "introduction", "goals"},
 				},
 			},
 		},
@@ -560,6 +589,7 @@ func buildChatTools(ws *models.WorldState) []ai.Tool {
 func (a *App) processToolCalls(ctx context.Context, session *world.SessionState, toolCalls []ai.ToolCall, messageID string, notify func(event, data string)) []toolCallResult {
 	var results []toolCallResult
 	for _, tc := range toolCalls {
+		slog.Info("processing tool call", "tool", tc.Function.Name, "args", tc.Function.Arguments)
 		var result string
 		switch tc.Function.Name {
 		case "moveToLocation":
@@ -576,6 +606,7 @@ func (a *App) processToolCalls(ctx context.Context, session *world.SessionState,
 		default:
 			result = "Unknown tool."
 		}
+		slog.Info("tool call result", "tool", tc.Function.Name, "result", result)
 		results = append(results, toolCallResult{ToolCall: tc, Result: result})
 	}
 	return results
@@ -583,8 +614,9 @@ func (a *App) processToolCalls(ctx context.Context, session *world.SessionState,
 
 func (a *App) handleMoveToLocation(ctx context.Context, session *world.SessionState, tc ai.ToolCall, messageID string, notify func(event, data string)) (string, error) {
 	var args struct {
-		Destination   string  `json:"destination"`
-		NarrativeTime *string `json:"narrativeTime"`
+		Destination   string   `json:"destination"`
+		NarrativeTime string   `json:"narrativeTime"`
+		AccompaniedBy []string `json:"accompaniedBy"`
 	}
 	if err := json.Unmarshal([]byte(tc.Function.Arguments), &args); err != nil {
 		return "", fmt.Errorf("parse moveToLocation args: %w", err)
@@ -620,15 +652,20 @@ func (a *App) handleMoveToLocation(ctx context.Context, session *world.SessionSt
 		clusterID = *resolved.ClusterID
 	}
 
+	// Track accompanied character IDs so simulation doesn't relocate them
+	accompaniedIDs := make(map[string]bool)
 	if clusterID != "" {
 		session.MoveCharacter(ws.PlayerCharacterID, clusterID)
 
-		// Apply move time cost before checking simulation trigger
-		narrativeTime := ""
-		if args.NarrativeTime != nil {
-			narrativeTime = *args.NarrativeTime
+		// Move accompanied characters to the same location
+		for _, name := range args.AccompaniedBy {
+			if match, found := session.FindBestCharacterMatch(name); found && !match.IsPlayer {
+				session.MoveCharacter(match.ID, clusterID)
+				accompaniedIDs[match.ID] = true
+			}
 		}
-		session.AdvanceTime(models.TimeCosts["move"], narrativeTime)
+
+		session.AdvanceTime(models.TimeCosts["move"], args.NarrativeTime)
 
 		currentTick := session.GetCurrentTick()
 		timeSinceLastSim := currentTick - session.GetLastSimulationTick()
@@ -652,7 +689,9 @@ func (a *App) handleMoveToLocation(ctx context.Context, session *world.SessionSt
 					session.AddConversation(conv)
 				}
 				for _, update := range simResult.CharacterUpdates {
-					session.MoveCharacter(update.CharacterID, update.NewLocationID)
+					if !accompaniedIDs[update.CharacterID] {
+						session.MoveCharacter(update.CharacterID, update.NewLocationID)
+					}
 				}
 			}
 			session.SetLastSimulationTick(currentTick)
@@ -667,15 +706,27 @@ func (a *App) handleMoveToLocation(ctx context.Context, session *world.SessionSt
 	if destName == "" {
 		destName = args.Destination
 	}
-	chars := session.GetCharactersAtPlayerLocation()
-	if len(chars) > 0 {
-		var names []string
-		for _, c := range chars {
-			names = append(names, c.Name)
+
+	// List ALL non-player characters at the destination, marking undiscovered ones
+	allChars := session.GetAllCharactersAtLocation(clusterID)
+	var discovered, undiscovered []string
+	for _, c := range allChars {
+		if c.IsDiscovered {
+			discovered = append(discovered, c.Name)
+		} else {
+			undiscovered = append(undiscovered, c.Name)
 		}
-		return fmt.Sprintf("Moved to %s. Characters present: %s.", destName, strings.Join(names, ", ")), nil
 	}
-	return fmt.Sprintf("Moved to %s.", destName), nil
+
+	var result strings.Builder
+	fmt.Fprintf(&result, "Moved to %s.", destName)
+	if len(discovered) > 0 {
+		fmt.Fprintf(&result, " Characters here: %s.", strings.Join(discovered, ", "))
+	}
+	if len(undiscovered) > 0 {
+		fmt.Fprintf(&result, " ACTION REQUIRED: Call discoverCharacter for each of these undiscovered characters BEFORE narrating: %s.", strings.Join(undiscovered, ", "))
+	}
+	return result.String(), nil
 }
 
 func (a *App) handleAdvanceTime(session *world.SessionState, tc ai.ToolCall) string {
