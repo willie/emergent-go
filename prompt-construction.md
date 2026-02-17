@@ -644,7 +644,15 @@ The same model ID is used for main conversation, off-screen simulation, and loca
 
 When the player moves to a new location and >5 ticks have elapsed since the last simulation, the system simulates what NPCs were doing elsewhere. This makes **two separate LLM calls** with their own prompts.
 
-### 10a. Summary Mode (5-10 ticks elapsed)
+Simulation depth is determined by `determineSimulationDepth` (simulation.go:37-48):
+- **< 5 ticks** → skip (no simulation)
+- **5-10 ticks** → skip (threshold not reached)
+- **11-20 ticks** → summary mode (brief 1-2 sentence summary)
+- **> 20 ticks** or unresolved plot points → full mode (dialogue + event extraction)
+
+Note: `hasUnresolvedPlotPoints` is always passed as `false` (simulation.go:407), so in practice only elapsed time determines depth.
+
+### 10a. Summary Mode (11-20 ticks elapsed, no unresolved plot points)
 
 **Function:** `generateSummary` (line 58)
 
